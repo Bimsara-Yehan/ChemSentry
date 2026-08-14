@@ -1,0 +1,40 @@
+# --- Environment / secrets ---
+.env
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/
+
+# --- Node / frontend ---
+node_modules/
+ui/dist/
+ui/.vite/
+npm-debug.log*
+
+# --- Corpus (fetched SDS PDFs -- not checked into git) ---
+corpus/raw/*
+!corpus/raw/.gitkeep
+
+# --- Firmware secrets: TLS certs/keys must never be committed ---
+firmware/certs/*
+!firmware/certs/.gitkeep
+!firmware/certs/README.md
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- IDE ---
+.vscode/
+.idea/

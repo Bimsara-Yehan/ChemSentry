@@ -1,0 +1,30 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: chemsentry-mosquitto
+    ports:
+      - "8883:8883"
+    volumes:
+      - ./firmware/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./firmware/certs:/mosquitto/certs:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    container_name: chemsentry-postgres
+    environment:
+      POSTGRES_USER: chemsentry
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: chemsentry
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  postgres_data:

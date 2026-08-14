@@ -1,0 +1,38 @@
+# API layer
+fastapi
+uvicorn[standard]
+pydantic
+
+# Auth & security
+python-jose[cryptography]
+passlib[bcrypt]
+
+# Retrieval & NLP (Labs 02-06)
+nltk
+scikit-learn
+
+# Classification (Lab 08)
+pandas
+
+# Association rules (Lab 09)
+mlxtend
+
+# Crawling (Lecture 11)
+requests
+beautifulsoup4
+
+# MQTT (Agent C)
+paho-mqtt
+
+# Database
+sqlalchemy
+psycopg2-binary          # only needed if using PostgreSQL rather than SQLite
+
+# LLM integration
+anthropic                 # or openai, depending on which API the team picks
+
+# Testing & quality
+pytest
+pytest-cov
+black
+ruff
