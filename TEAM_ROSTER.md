@@ -6,12 +6,12 @@
 
 ## Team Members
 
-| Role | Member Name | GitHub Handle | Email | Responsibilities |
-|---|---|---|---|---|
-| **M1** | [Name] | @github-handle | email@domain.lk | Crawler, extraction, preprocessing, indexing |
-| **M2** | [Name] | @github-handle | email@domain.lk | Retrieval cascade, ranking, evaluation suite |
-| **M3** | [Name] | @github-handle | email@domain.lk | Reconciliation, safety states, classifier, Apriori, LLM |
-| **M4** | Sahas Seneviratne | @github-handle | email@domain.lk | Agent C, IoT, security, gateway, UI, deployment |
+| Role | Member Name | GitHub Handle | Responsibilities |
+|---|---|---|---|
+| **M1** | (sadhifumer) | @sadhifumer | Crawler, extraction, preprocessing, indexing |
+| **M2** | Bimsara Yehan | @Bimsara-Yehan | Retrieval cascade, ranking, evaluation suite |
+| **M3** | (theyasassri) | @theyasassri | Reconciliation, safety states, classifier, Apriori, LLM |
+| **M4** | Sahas Seneviratne | @sahasenevi | Agent C, IoT, security, gateway, UI, deployment |
 
 ---
 
@@ -154,12 +154,12 @@ High-risk, shared surfaces require **2 reviewers**:
 
 ## Status
 
-- [ ] **M1 name:** [Pending]
-- [ ] **M2 name:** [Pending]
-- [ ] **M3 name:** [Pending]
-- [x] **M4 name:** Sahas Seneviratne
+- [x] **M1 name:** @sadhifumer
+- [x] **M2 name:** Bimsara Yehan (@Bimsara-Yehan)
+- [x] **M3 name:** @theyasassri
+- [x] **M4 name:** Sahas Seneviratne (@sahasenevi)
 
-**Next Step:** Fill in the three missing names, then update `.github/CODEOWNERS` with GitHub handles.
+**CODEOWNERS:** See `.github/CODEOWNERS` — already configured on GitHub per Branching_and_Delegation_Strategy.md.
 
 ---
 
