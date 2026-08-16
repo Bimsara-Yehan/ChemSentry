@@ -1,0 +1,7 @@
+# Shared-surface review enforcement.
+# Paths and ownership per Branching_and_Delegation_Strategy.md Part I, Section 6.
+# M1=@sadhifumer  M2=@Bimsara-Yehan  M3=@theyasassri  M4=@sahasenevi
+
+/agents/protocols/     @Bimsara-Yehan @theyasassri @sahasenevi
+/safety/               @theyasassri @Bimsara-Yehan
+/docs/architecture.md  @sadhifumer @Bimsara-Yehan @theyasassri @sahasenevi
