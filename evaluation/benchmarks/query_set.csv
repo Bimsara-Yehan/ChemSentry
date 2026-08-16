@@ -1,0 +1,51 @@
+query_id,query_text,category,expected_chemicals,notes
+Q001,toluene,exact,toluene,baseline single-token exact match
+Q002,acetone,exact,acetone,baseline single-token exact match
+Q003,sodium hydroxide,exact,sodium hydroxide,two-token exact chemical name
+Q004,hydrochloric acid,exact,hydrochloric acid,two-token exact chemical name
+Q005,ethanol,exact,ethanol,baseline single-token exact match
+Q006,ammonia,exact,ammonia,baseline single-token exact match
+Q007,hydrogen peroxide,exact,hydrogen peroxide,two-token exact chemical name
+Q008,xylene,exact,xylene,baseline single-token exact match
+Q009,ferric chloride,exact,ferric chloride,two-token exact chemical name
+Q010,potassium permanganate,exact,potassium permanganate,two-token exact chemical name
+Q011,tolune,misspelled,toluene,1-char deletion (edit distance 1)
+Q012,acetne,misspelled,acetone,1-char deletion (edit distance 1)
+Q013,sodum hydroxide,misspelled,sodium hydroxide,1-char deletion in first token
+Q014,hydrocloric acid,misspelled,hydrochloric acid,1-char deletion in first token
+Q015,ethnol,misspelled,ethanol,1-char transposition-adjacent (edit distance 1)
+Q016,amonia,misspelled,ammonia,1-char deletion (double letter dropped)
+Q017,hydrogen peroxde,misspelled,hydrogen peroxide,1-char deletion in second token
+Q018,xylen,misspelled,xylene,1-char deletion (edit distance 1)
+Q019,feric chloride,misspelled,ferric chloride,1-char deletion in first token
+Q020,potasium permanganate,misspelled,potassium permanganate,1-char deletion (double letter dropped)
+Q021,*chlorate,wildcard,sodium chlorate,suffix wildcard per Final Plan Section 5.3
+Q022,*chloride,wildcard,ferric chloride,suffix wildcard
+Q023,*ol,wildcard,ethanol; methanol,suffix wildcard matches -ol alcohols
+Q024,sodium *,wildcard,sodium hydroxide; sodium chlorate,prefix wildcard on shared first token
+Q025,*acid,wildcard,hydrochloric acid; sulfuric acid; nitric acid,suffix wildcard on acid family
+Q026,hydro*,wildcard,hydrochloric acid; hydrogen peroxide,prefix wildcard
+Q027,*peroxide,wildcard,hydrogen peroxide,suffix wildcard
+Q028,*ate,wildcard,sodium chlorate; potassium permanganate,suffix wildcard on -ate family
+Q029,per*,wildcard,hydrogen peroxide; potassium permanganate,prefix wildcard
+Q030,*ane,wildcard,,suffix wildcard with no vocabulary match - tests empty-result handling
+Q031,storage temperature,phrase,,exact adjacent 2-word phrase; tests positional index phrase matching
+Q032,personal protective equipment,phrase,,exact adjacent 3-word phrase (PPE section header)
+Q033,exposure limit,phrase,,exact adjacent 2-word phrase
+Q034,handling and storage,phrase,,exact adjacent phrase (GHS Section 7 header)
+Q035,flash point,phrase,,exact adjacent 2-word phrase
+Q036,first aid measures,phrase,,exact adjacent phrase (GHS Section 4 header)
+Q037,hazard identification,phrase,,exact adjacent phrase (GHS Section 2 header)
+Q038,incompatible materials,phrase,,exact adjacent phrase (GHS Section 10 term)
+Q039,respiratory protection,phrase,,exact adjacent phrase (PPE subsection)
+Q040,keep away from heat,phrase,,exact adjacent 4-word phrase
+Q041,storage /5 temperature,proximity,,within-5-word proximity; broader than exact phrase Q031
+Q042,toluene /10 flammable,proximity,,proximity between chemical name and hazard term
+Q043,acid /5 corrosive,proximity,,proximity between chemical class and hazard term
+Q044,PPE /5 gloves,proximity,,proximity within PPE section
+Q045,ventilation /5 required,proximity,,proximity within handling guidance
+Q046,hydrochloric /5 chlorine,proximity,,proximity relevant to reactivity warnings
+Q047,sodium hypochlorite /10 incompatible,proximity,,co-storage incompatibility language proximity
+Q048,spill /5 procedure,proximity,,proximity within accidental release section
+Q049,eye contact /5 rinse,proximity,,proximity within first-aid section
+Q050,storage /5 25,proximity,,proximity between storage term and a numeric threshold
