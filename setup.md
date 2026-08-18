@@ -132,7 +132,7 @@ sqlalchemy
 psycopg2-binary          # only needed if using PostgreSQL rather than SQLite
 
 # LLM integration
-anthropic                 # or openai, depending on which API the team picks
+mistralai
 
 # Testing & quality
 pytest
@@ -287,7 +287,7 @@ fix/<desc>
 |---|---|
 | **M1** (crawler, extraction, indexing) | Nothing extra — baseline covers it |
 | **M2** (retrieval, ranking, evaluation) | `scikit-learn`, `nltk` data downloaded and verified working — test with a throwaway script before Week 4 |
-| **M3** (classification, Apriori, LLM) | `mlxtend`, an Anthropic or OpenAI API key (get this issued in Week 3, not Week 8) |
+| **M3** (classification, Apriori, LLM) | `mlxtend`, a Mistral API key (get this issued in Week 3, not Week 8) |
 | **M4** (IoT, gateway, security, frontend, deployment) | PlatformIO, USB driver for the ESP32 board, Docker Desktop confirmed working, Mosquitto TLS certs generated |
 
 ---
