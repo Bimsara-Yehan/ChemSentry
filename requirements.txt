@@ -29,7 +29,7 @@ sqlalchemy
 psycopg2-binary          # only needed if using PostgreSQL rather than SQLite
 
 # LLM integration
-anthropic                 # or openai, depending on which API the team picks
+mistralai
 
 # Testing & quality
 pytest
