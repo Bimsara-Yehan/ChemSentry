@@ -1,6 +1,7 @@
 """Unit tests for CoStoragePatternMiner (Lab 09)."""
 
 import pytest
+
 from agents.agent_b_analysis.apriori_discovery import CoStoragePatternMiner
 
 

@@ -3,11 +3,15 @@
 from agents.agent_b_analysis.apriori_discovery import CoStoragePatternMiner
 from agents.agent_b_analysis.chat_fast_path import ChatFastPath
 from agents.agent_b_analysis.classifier import HazardSeverityClassifier
+from agents.agent_b_analysis.llm_layer import SafetyCardNarrator
+from agents.agent_b_analysis.query_orchestrator import OpenQueryOrchestrator
 from agents.agent_b_analysis.reconciler import EvidenceReconciler
 
 __all__ = [
+    "ChatFastPath",
+    "CoStoragePatternMiner",
     "EvidenceReconciler",
     "HazardSeverityClassifier",
-    "CoStoragePatternMiner",
-    "ChatFastPath",
+    "OpenQueryOrchestrator",
+    "SafetyCardNarrator",
 ]

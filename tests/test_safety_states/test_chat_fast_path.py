@@ -1,6 +1,7 @@
 """Unit tests for ChatFastPath (Lab 06B)."""
 
 import pytest
+
 from agents.agent_b_analysis.chat_fast_path import ChatFastPath
 
 

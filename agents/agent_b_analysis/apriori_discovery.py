@@ -4,11 +4,11 @@ Framed as discovery of co-occurring storage patterns, NOT direct hazard classifi
 Identified rules are cross-referenced with CAMEO reactivity matrix lookups.
 """
 
-from typing import List, Dict, Any
+from typing import Any
+
 import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
 from mlxtend.preprocessing import TransactionEncoder
-
 
 # Sample CAMEO reactivity incompatibility lookup matrix
 KNOWN_INCOMPATIBLE_PAIRS = {
@@ -25,7 +25,7 @@ class CoStoragePatternMiner:
         self.min_support = min_support
         self.min_threshold_lift = min_threshold_lift
 
-    def discover_co_storage_rules(self, transactions: List[List[str]]) -> List[Dict[str, Any]]:
+    def discover_co_storage_rules(self, transactions: list[list[str]]) -> list[dict[str, Any]]:
         """Mine frequent itemsets and association rules from zone co-storage transactions."""
         if not transactions:
             return []
