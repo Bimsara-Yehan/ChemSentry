@@ -5,10 +5,12 @@ from agents.protocols.schemas import (
     SafetyEvaluationRequest,
     SafetyEvaluationResult,
     SafetyState,
+    ThresholdDirection,
 )
 
 __all__ = [
     "SafetyState",
+    "ThresholdDirection",
     "ProvenancedThreshold",
     "SafetyEvaluationRequest",
     "SafetyEvaluationResult",
