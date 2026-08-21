@@ -2,6 +2,13 @@
 # Paths and ownership per Branching_and_Delegation_Strategy.md Part I, Section 6.
 # M1=@sadhifumer  M2=@Bimsara-Yehan  M3=@theyasassri  M4=@sahasenevi
 
-/agents/protocols/     @Bimsara-Yehan @theyasassri @sahasenevi
-/safety/               @theyasassri @Bimsara-Yehan
-/docs/architecture.md  @sadhifumer @Bimsara-Yehan @theyasassri @sahasenevi
+/agents/protocols/         @Bimsara-Yehan @theyasassri @sahasenevi
+/safety/                   @theyasassri @Bimsara-Yehan
+/docs/architecture.md      @sadhifumer @Bimsara-Yehan @theyasassri @sahasenevi
+
+# api/ wires the deterministic safety layer into live HTTP endpoints, and
+# agents/agent_b_analysis/ is where the LLM layer sits next to the safety
+# state machine -- both are safety-adjacent surfaces even though they're a
+# single member's primary directory, so they get a second reviewer too.
+/api/                      @sahasenevi @theyasassri @Bimsara-Yehan
+/agents/agent_b_analysis/  @theyasassri @Bimsara-Yehan @sahasenevi

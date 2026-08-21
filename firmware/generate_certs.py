@@ -9,6 +9,7 @@ Creates files under `firmware/certs/` by default:
 Usage:
     python generate_certs.py --out firmware/certs --devices device1,device2
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,7 +38,9 @@ def gen_private_key(key_size: int = 2048) -> rsa.RSAPrivateKey:
 
 def gen_ca(subject_name: str, valid_days: int = 3650):
     key = gen_private_key(4096)
-    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject_name)])
+    subject = issuer = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, subject_name)]
+    )
     now = datetime.utcnow()
     cert = (
         x509.CertificateBuilder()
@@ -81,7 +84,9 @@ def gen_cert_signed(
         except Exception:
             san_list.append(x509.DNSName(s))
 
-    builder = builder.add_extension(x509.SubjectAlternativeName(san_list), critical=False)
+    builder = builder.add_extension(
+        x509.SubjectAlternativeName(san_list), critical=False
+    )
     cert = builder.sign(private_key=issuer_key, algorithm=hashes.SHA256())
     return key, cert
 
@@ -106,7 +111,9 @@ def main() -> None:
         default="device1",
         help="comma-separated device/client common names to generate (default: device1)",
     )
-    parser.add_argument("--common-name", default="ChemSentry Local CA", help="CA common name")
+    parser.add_argument(
+        "--common-name", default="ChemSentry Local CA", help="CA common name"
+    )
     args = parser.parse_args()
 
     out = os.path.abspath(args.out)
@@ -118,7 +125,9 @@ def main() -> None:
 
     # Server cert (for broker) - include localhost and 127.0.0.1
     server_san = ["localhost", "127.0.0.1"]
-    srv_key, srv_cert = gen_cert_signed("chemsentry-mosquitto", server_san, ca_key, ca_cert)
+    srv_key, srv_cert = gen_cert_signed(
+        "chemsentry-mosquitto", server_san, ca_key, ca_cert
+    )
     write_pem(os.path.join(out, "server.key.pem"), pem_private_key(srv_key))
     write_pem(os.path.join(out, "server.crt.pem"), pem_cert(srv_cert))
 

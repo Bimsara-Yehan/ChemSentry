@@ -1,0 +1,12 @@
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Scoped to F (pyflakes: unused imports, undefined names, etc.) and I (import
+# sorting) -- the bug class that has actually broken this project (undeclared
+# deps, unused imports, F401/F821-style mistakes). The full default ruleset
+# includes pyupgrade (UP*) and flake8-bugbear (B*) checks that flag pre-existing,
+# harmless style across the codebase (old-style `List`/`Optional` typing) and at
+# least one FastAPI false-positive (B008 on `Depends(...)` default arguments).
+# Widen this once the team agrees on a broader style policy.
+select = ["E4", "E7", "E9", "F", "I"]
