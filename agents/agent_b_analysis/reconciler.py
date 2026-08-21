@@ -1,6 +1,5 @@
 """Evidence Reconciler -- version comparison, Jaccard conflict detection, authority hierarchy (M3)."""
 
-from typing import List, Optional, Set, Tuple
 
 from agents.protocols.schemas import ProvenancedThreshold
 
@@ -16,7 +15,7 @@ class EvidenceReconciler:
     """Reconciles conflicting Safety Data Sheet (SDS) evidence across suppliers and document versions."""
 
     @staticmethod
-    def jaccard_similarity(set_a: Set[str], set_b: Set[str]) -> float:
+    def jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
         """Calculate Jaccard similarity coefficient between two token/hazard sets.
 
         Formula: J(A, B) = |A ∩ B| / |A ∪ B|
@@ -27,10 +26,10 @@ class EvidenceReconciler:
 
     def detect_hazard_conflicts(
         self,
-        hazards_doc_a: Set[str],
-        hazards_doc_b: Set[str],
+        hazards_doc_a: set[str],
+        hazards_doc_b: set[str],
         min_jaccard_threshold: float = 0.6,
-    ) -> Tuple[bool, float, str]:
+    ) -> tuple[bool, float, str]:
         """Detect conflict between hazard statement sets from two supplier SDS documents.
 
         Returns:
@@ -60,9 +59,9 @@ class EvidenceReconciler:
 
     def select_authoritative_threshold(
         self,
-        thresholds: List[ProvenancedThreshold],
+        thresholds: list[ProvenancedThreshold],
         conflict_tolerance_pct: float = DEFAULT_CONFLICT_TOLERANCE_PCT,
-    ) -> Tuple[Optional[ProvenancedThreshold], List[str]]:
+    ) -> tuple[ProvenancedThreshold | None, list[str]]:
         """Select the single most authoritative threshold from a list of retrieved supplier thresholds.
 
         If more than one source shares the top authority score, all of them (not just
@@ -89,8 +88,10 @@ class EvidenceReconciler:
                     f"{t.supplier_name}={t.value}{t.unit}" for t in top_group
                 )
                 return None, [
-                    f"Conflict: {len(top_group)} equal-authority sources (score={max_authority}) diverge "
-                    f"beyond {conflict_tolerance_pct:.1f}% tolerance ({names}; variance={variance_pct:.1f}%)."
+                    (
+                        f"Conflict: {len(top_group)} equal-authority sources (score={max_authority}) diverge "
+                        f"beyond {conflict_tolerance_pct:.1f}% tolerance ({names}; variance={variance_pct:.1f}%)."
+                    )
                 ]
 
         primary = top_group[0]

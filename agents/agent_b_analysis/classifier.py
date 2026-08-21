@@ -1,22 +1,22 @@
 """Hazard Severity Classifier using scikit-learn Decision Tree (M3, Lab 08)."""
 
-from typing import Dict, List, Tuple
+from typing import ClassVar
+
 import numpy as np
-import pandas as pd
+from sklearn.metrics import classification_report
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import classification_report, confusion_matrix
 
 
 class HazardSeverityClassifier:
     """Classifies chemical hazard severity (LOW, MEDIUM, HIGH, CRITICAL) from NFPA & GHS features (Lab 08)."""
 
-    SEVERITY_CLASSES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    SEVERITY_CLASSES: ClassVar[list[str]] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 
     def __init__(self) -> None:
         self.model = DecisionTreeClassifier(class_weight="balanced", random_state=42)
         self.is_trained = False
 
-    def train_synthetic_baseline(self) -> Dict[str, str]:
+    def train_synthetic_baseline(self) -> dict[str, str]:
         """Train the classifier on synthetic baseline hazard feature data."""
         # Features: [nfpa_health (0-4), nfpa_flammability (0-4), nfpa_instability (0-4), ghas_hazard_count (0-10)]
         X_train = np.array([
@@ -40,7 +40,7 @@ class HazardSeverityClassifier:
 
     def predict_severity(
         self, nfpa_health: int, nfpa_flammability: int, nfpa_instability: int, ghs_code_count: int
-    ) -> Tuple[str, float]:
+    ) -> tuple[str, float]:
         """Predict hazard severity level for given chemical safety parameters."""
         if not self.is_trained:
             self.train_synthetic_baseline()

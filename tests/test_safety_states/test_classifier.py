@@ -1,6 +1,7 @@
 """Unit tests for HazardSeverityClassifier (Lab 08)."""
 
 import pytest
+
 from agents.agent_b_analysis.classifier import HazardSeverityClassifier
 
 

@@ -4,13 +4,13 @@ High-speed keyword and regex pattern matching to answer standard queries without
 """
 
 import re
-from typing import Dict, Optional, Tuple
+from typing import ClassVar
 
 
 class ChatFastPath:
     """Fast-path rule-based response engine for chemical safety queries (Lab 06B)."""
 
-    PATTERNS = [
+    PATTERNS: ClassVar[list[tuple[str, str]]] = [
         (
             r"flash\s*point\s+of\s+([a-zA-Z0-9\s]+)",
             "The flash point of {0} is dynamically retrieved from Section 9 (Physical Properties) of its versioned SDS.",
@@ -25,7 +25,7 @@ class ChatFastPath:
         ),
     ]
 
-    def match_fast_path(self, query_text: str) -> Tuple[bool, Optional[str]]:
+    def match_fast_path(self, query_text: str) -> tuple[bool, str | None]:
         """Attempt fast-path rule matching for user safety query.
         
         Returns:
