@@ -26,7 +26,7 @@ coding. For folder structure, Git workflow, and hardware procurement, see `setup
 | **Firmware** | Arduino C++ via PlatformIO | ESP32 + DHT22 |
 | **Sensor → broker** | `PubSubClient` (device side), Eclipse Mosquitto (broker), `paho-mqtt` (Python side) | TLS on port 8883 |
 | **Database** | PostgreSQL (or SQLite for local dev) via SQLAlchemy | Inventory, zones, audit log |
-| **Auth** | `python-jose` (JWT) + `passlib` (hashing) | RBAC: Operator / Safety Officer / Admin |
+| **Auth** | `PyJWT` (JWT) + `bcrypt` (hashing) | RBAC: Operator / Safety Officer / Admin |
 | **Frontend** | React + Vite + Tailwind CSS | Three modules: Live Environment, Reconciliation, Supervisor |
 | **Charts** | Recharts | Evaluation results, compliance dashboard |
 | **Containerisation** | Docker + Docker Compose | One command spins up broker + database |
@@ -85,8 +85,8 @@ uvicorn[standard]
 pydantic
 
 # Auth & security
-python-jose[cryptography]
-passlib[bcrypt]
+pyjwt
+bcrypt
 
 # Retrieval & NLP
 nltk

@@ -30,12 +30,16 @@ class OpenQueryOrchestrator:
         self._tool_definitions: list[dict[str, Any]] = []
 
         if not self.api_key:
-            logger.warning("MISTRAL_API_KEY not found. Orchestrator will run in fallback mode.")
+            logger.warning(
+                "MISTRAL_API_KEY not found. Orchestrator will run in fallback mode."
+            )
             self.client = None
         else:
             self.client = Mistral(api_key=self.api_key)
 
-    def register_tool(self, name: str, description: str, parameters: dict[str, Any], func: Callable):
+    def register_tool(
+        self, name: str, description: str, parameters: dict[str, Any], func: Callable
+    ):
         """Registers a Python function as a tool the LLM can call.
 
         Args:
@@ -45,14 +49,16 @@ class OpenQueryOrchestrator:
             func: The Python callable function.
         """
         self._tools[name] = func
-        self._tool_definitions.append({
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": description,
-                "parameters": parameters,
+        self._tool_definitions.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                },
             }
-        })
+        )
 
     def handle_query(self, query: str) -> str:
         """Processes query by dynamically invoking registered tools as selected by the LLM.
@@ -68,8 +74,11 @@ class OpenQueryOrchestrator:
             return f"FALLBACK: Unable to orchestrate query dynamically. Received query: '{query}'."
 
         messages = [
-            {"role": "system", "content": "You are ChemSentry's query orchestrator. Answer user queries by calling tools to retrieve real safety details. Never guess or fabricate rules. Present facts exactly as returned by tools."},
-            {"role": "user", "content": query}
+            {
+                "role": "system",
+                "content": "You are ChemSentry's query orchestrator. Answer user queries by calling tools to retrieve real safety details. Never guess or fabricate rules. Present facts exactly as returned by tools.",
+            },
+            {"role": "user", "content": query},
         ]
 
         try:
@@ -78,7 +87,7 @@ class OpenQueryOrchestrator:
                 model=self.model,
                 messages=messages,
                 tools=self._tool_definitions,
-                tool_choice="auto"
+                tool_choice="auto",
             )
 
             message = response.choices[0].message
@@ -87,28 +96,37 @@ class OpenQueryOrchestrator:
                 for tool_call in message.tool_calls:
                     tool_name = tool_call.function.name
                     if tool_name in self._tools:
-                        tool_args = json.loads(tool_call.function.arguments)
-                        # Call registered tool
                         try:
+                            tool_args = json.loads(tool_call.function.arguments)
                             tool_result = self._tools[tool_name](**tool_args)
                         except Exception as inner:  # noqa: BLE001
                             tool_result = f"Error executing tool: {inner}"
-                        
-                        messages.append({
-                             "role": "tool",
-                             "name": tool_name,
-                             "content": str(tool_result),
-                             "tool_call_id": tool_call.id
-                        })
-                
+
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "name": tool_name,
+                                "content": str(tool_result),
+                                "tool_call_id": tool_call.id,
+                            }
+                        )
+
                 # Second turn: synthesize result
                 final_response = self.client.chat.complete(
-                    model=self.model,
-                    messages=messages
+                    model=self.model, messages=messages
                 )
-                return final_response.choices[0].message.content.strip()
+                final_content = final_response.choices[0].message.content
+                return (
+                    final_content.strip()
+                    if final_content
+                    else "FALLBACK: Empty synthesis response."
+                )
             else:
-                return message.content.strip()
+                return (
+                    message.content.strip()
+                    if message.content
+                    else "FALLBACK: Empty response."
+                )
 
         except Exception as e:  # noqa: BLE001
             logger.error(f"Error in orchestrator handling: {e}")
