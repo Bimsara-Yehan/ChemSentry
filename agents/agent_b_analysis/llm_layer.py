@@ -23,13 +23,17 @@ class SafetyCardNarrator:
     natural language phrasing, summaries, and multilingual translations.
     """
 
+    SUPPORTED_LANGUAGES = {"si": "Sinhala", "ta": "Tamil"}
+
     def __init__(self, api_key: str | None = None):
         """Initializes the narrator, loading the key from the environment if not provided."""
         self.api_key = api_key or os.getenv("MISTRAL_API_KEY")
         self.model = "mistral-small-latest"
-        
+
         if not self.api_key:
-            logger.warning("MISTRAL_API_KEY not found. Narrator will run in fallback mode.")
+            logger.warning(
+                "MISTRAL_API_KEY not found. Narrator will run in fallback mode."
+            )
             self.client = None
         else:
             self.client = Mistral(api_key=self.api_key)
@@ -70,15 +74,20 @@ class SafetyCardNarrator:
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content}
-                ]
+                    {"role": "user", "content": user_content},
+                ],
             )
-            return response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("Mistral returned an empty explanation")
+            return content.strip()
         except Exception as e:  # noqa: BLE001
             logger.error(f"Mistral API call failed: {e}")
             return f"FALLBACK: The safety state is {result.state.value}. {result.reasoning}"
 
-    def translate_safety_card(self, result: SafetyEvaluationResult, language: str) -> dict[str, str]:
+    def translate_safety_card(
+        self, result: SafetyEvaluationResult, language: str
+    ) -> dict[str, str]:
         """Translates safety card contents into Sinhala ('si') or Tamil ('ta').
 
         Args:
@@ -86,16 +95,21 @@ class SafetyCardNarrator:
             language: The target language code ('si' or 'ta').
 
         Returns:
-            A dictionary containing translated fields.
+            A dictionary containing translated fields. The 'state' field is always the
+            deterministic result's own value -- never the LLM's translated copy of it --
+            so a mistranslation can never change the displayed safety verdict.
         """
-        target_lang = "Sinhala" if language.lower() == "si" else "Tamil"
-        
         fallback_data = {
             "chemical_name": result.chemical_name,
             "state": result.state.value,
             "reasoning": f"[Translation Unavailable] {result.reasoning}",
-            "citation": result.provenance.citation if result.provenance else "N/A"
+            "citation": result.provenance.citation if result.provenance else "N/A",
         }
+
+        target_lang = self.SUPPORTED_LANGUAGES.get((language or "").lower())
+        if target_lang is None:
+            logger.warning(f"Unsupported translation language code: {language!r}")
+            return fallback_data
 
         if not self.client:
             return fallback_data
@@ -103,7 +117,8 @@ class SafetyCardNarrator:
         system_prompt = (
             f"You are a professional chemical safety translator translating to {target_lang}. "
             "Translate the safety card information accurately. Keep chemical names in standard english spelling "
-            "or transliterated if appropriate, but translate the safety verdict, warnings, and reasoning text. "
+            "or transliterated if appropriate, but translate the warnings and reasoning text. "
+            "Do not translate the 'state' field -- copy it through unchanged. "
             "Format the response as a valid JSON with keys: chemical_name, state, reasoning, and citation."
         )
 
@@ -120,12 +135,27 @@ class SafetyCardNarrator:
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content}
-                ]
+                    {"role": "user", "content": user_content},
+                ],
             )
             import json
-            content = response.choices[0].message.content.strip()
-            return json.loads(content)
+
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("Mistral returned an empty translation")
+            translated = json.loads(content.strip())
+            if not isinstance(translated, dict):
+                raise ValueError(
+                    f"Expected a JSON object, got {type(translated).__name__}"
+                )
+
+            # The safety verdict is decided by the deterministic layer, not the LLM --
+            # never trust an LLM-produced copy of it, even one that claims to be a
+            # same-language passthrough.
+            translated["state"] = result.state.value
+            for key in ("chemical_name", "reasoning", "citation"):
+                translated.setdefault(key, fallback_data[key])
+            return translated
         except Exception as e:  # noqa: BLE001
             logger.error(f"Mistral translation call failed: {e}")
             return fallback_data

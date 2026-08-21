@@ -11,37 +11,45 @@ Auth flow:
   5. RBAC enforces role-based access (viewer < analyst < admin)
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
 from datetime import datetime, timezone
-import os
+from typing import Optional
 
-from api.models import (
-    TokenResponse, UserLogin, UserInfo, HealthCheck,
-    QueryRequest, QueryResponse, UserRole
-)
-from api.security import (
-    create_access_token, get_current_user, authenticate_user, require_role
-)
-from api.database import get_db, init_db, check_db_health, get_db_schema_info
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 # Import Agent B & Safety State Machine components
 from agents.protocols.schemas import (
-    SafetyEvaluationRequest, SafetyEvaluationResult, ProvenancedThreshold,
-    ThresholdDirection, SafetyState
+    ProvenancedThreshold,
+    SafetyEvaluationRequest,
+    SafetyEvaluationResult,
+    SafetyState,
+    ThresholdDirection,
+)
+from api.database import check_db_health, get_db, get_db_schema_info, init_db
+from api.models import (
+    HealthCheck,
+    QueryRequest,
+    QueryResponse,
+    TokenResponse,
+    UserInfo,
+    UserLogin,
+    UserRole,
+)
+from api.security import (
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+    require_role,
 )
 from safety.state_machine import DeterministicSafetyEvaluator
-from agents.agent_b_analysis.chat_fast_path import ChatFastPath
-
 
 # Create FastAPI app
 app = FastAPI(
     title="ChemSentry API",
     description="Chemical safety retrieval, reconciliation, and deterministic evaluation gateway",
-    version="0.1.0"
+    version="0.1.0",
 )
 
 # Add CORS middleware (allow frontend to call from different origin during dev)
@@ -55,10 +63,13 @@ app.add_middleware(
 
 # Initialize engines
 evaluator = DeterministicSafetyEvaluator()
-fast_path = ChatFastPath()
 
-# Sample SDS threshold database (simulating retrieved SDS records from Agent A)
-SAMPLE_SDS_DATABASE = {
+# STOPGAP: Agent A's retrieval pipeline (corpus, index, TF-IDF ranking) does not exist
+# yet, so there is nothing real to query here. These are hand-entered placeholder
+# values, not thresholds retrieved from a versioned SDS document -- they exist only to
+# unblock API/frontend integration and MUST be replaced by real Agent A retrieval
+# before this project can claim "no hardcoded thresholds" (see CLAUDE.md).
+MOCK_SDS_DATABASE_PENDING_AGENT_A_RETRIEVAL = {
     "toluene": [
         ProvenancedThreshold(
             metric_name="max_storage_temperature",
@@ -69,7 +80,7 @@ SAMPLE_SDS_DATABASE = {
             supplier_name="ABC Chemicals",
             section_number="Section 7",
             authority_score=1.0,
-            citation="ABC Chemicals SDS Rev 2026-02 §7, p.5"
+            citation="ABC Chemicals SDS Rev 2026-02 §7, p.5",
         ),
         ProvenancedThreshold(
             metric_name="flash_point",
@@ -80,8 +91,8 @@ SAMPLE_SDS_DATABASE = {
             supplier_name="ABC Chemicals",
             section_number="Section 9",
             authority_score=1.0,
-            citation="ABC Chemicals SDS Rev 2026-02 §9, p.7"
-        )
+            citation="ABC Chemicals SDS Rev 2026-02 §9, p.7",
+        ),
     ],
     "ethanol": [
         ProvenancedThreshold(
@@ -93,7 +104,7 @@ SAMPLE_SDS_DATABASE = {
             supplier_name="Sigma Aldrich",
             section_number="Section 7",
             authority_score=1.0,
-            citation="Sigma Aldrich SDS Rev 2025-10 §7"
+            citation="Sigma Aldrich SDS Rev 2025-10 §7",
         )
     ],
     "acetone": [
@@ -106,9 +117,9 @@ SAMPLE_SDS_DATABASE = {
             supplier_name="Merck",
             section_number="Section 7",
             authority_score=1.0,
-            citation="Merck SDS Rev 2026-01 §7"
+            citation="Merck SDS Rev 2026-01 §7",
         )
-    ]
+    ],
 }
 
 # In-memory alerts registry for Supervisor Dashboard & Sign-Off workflow
@@ -118,6 +129,7 @@ ALERTS_REGISTRY = []
 # ============================================================================
 # Lifecycle Events
 # ============================================================================
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -130,10 +142,11 @@ async def startup_event():
 # Authentication Routes
 # ============================================================================
 
+
 @app.post("/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
     """Login with username/password, receive JWT token.
-    
+
     Demo users (for testing):
     - viewer_user / viewer123 (VIEWER role)
     - analyst_user / analyst123 (ANALYST role)
@@ -143,12 +156,12 @@ async def login(credentials: UserLogin):
     if not result:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password"
+            detail="Invalid username or password",
         )
-    
+
     user_id, role = result
     token, expires_in = create_access_token(user_id, credentials.username, role)
-    
+
     return TokenResponse(access_token=token, expires_in=expires_in)
 
 
@@ -156,18 +169,19 @@ async def login(credentials: UserLogin):
 # Health & Status Routes
 # ============================================================================
 
+
 @app.get("/health", response_model=HealthCheck)
 async def health_check(db: Session = Depends(get_db)):
     """Health check — verify API, database, and MQTT broker status."""
     db_status = check_db_health()
     mqtt_status = "ok"
     overall_status = "ok" if db_status == "ok" else "degraded"
-    
+
     return HealthCheck(
         status=overall_status,
         database=db_status,
         mqtt_broker=mqtt_status,
-        version="0.1.0"
+        version="0.1.0",
     )
 
 
@@ -176,8 +190,7 @@ async def debug_schema(user: UserInfo = Depends(get_current_user)):
     """Debug endpoint — show database schema (admin only)."""
     if user.role != UserRole.ADMIN:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin role required"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required"
         )
     return get_db_schema_info()
 
@@ -185,6 +198,7 @@ async def debug_schema(user: UserInfo = Depends(get_current_user)):
 # ============================================================================
 # Protected Core Domain Routes (require authentication)
 # ============================================================================
+
 
 @app.get("/me")
 async def get_current_user_info(user: UserInfo = Depends(get_current_user)):
@@ -194,30 +208,30 @@ async def get_current_user_info(user: UserInfo = Depends(get_current_user)):
 
 @app.post("/safety/evaluate", response_model=SafetyEvaluationResult)
 async def evaluate_safety_endpoint(
-    req: SafetyEvaluationRequest,
-    user: UserInfo = Depends(get_current_user)
+    req: SafetyEvaluationRequest, user: UserInfo = Depends(get_current_user)
 ):
     """Execute deterministic safety evaluation for a chemical reading.
-    
+
     Retrieves versioned SDS thresholds and evaluates current value strictly
     against source-backed limits (No hardcoding, No LLM decision).
-    
+
     Requires: ANALYST or ADMIN role.
     """
     if user.role == UserRole.VIEWER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Analyst or Admin role required for safety evaluation"
+            detail="Analyst or Admin role required for safety evaluation",
         )
 
     chem_key = req.chemical_name.lower().strip()
     retrieved_thresholds = [
-        t for t in SAMPLE_SDS_DATABASE.get(chem_key, [])
+        t
+        for t in MOCK_SDS_DATABASE_PENDING_AGENT_A_RETRIEVAL.get(chem_key, [])
         if t.metric_name == req.metric_name
     ]
 
     result = evaluator.evaluate(req, retrieved_thresholds)
-    
+
     # If WARNING state, automatically record in ALERTS_REGISTRY for Supervisor Dashboard
     if result.state == SafetyState.WARNING:
         alert_record = {
@@ -230,7 +244,7 @@ async def evaluate_safety_endpoint(
             "reasoning": result.reasoning,
             "status": "pending_review",
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "created_by": user.username
+            "created_by": user.username,
         }
         ALERTS_REGISTRY.append(alert_record)
 
@@ -239,24 +253,20 @@ async def evaluate_safety_endpoint(
 
 @app.post("/query", response_model=QueryResponse)
 async def query_chemical(
-    request: QueryRequest,
-    user: UserInfo = Depends(get_current_user)
+    request: QueryRequest, user: UserInfo = Depends(get_current_user)
 ):
     """Query a chemical for safety info, fast-path rule answers, and thresholds.
-    
+
     Requires: ANALYST or ADMIN role.
     """
     if user.role == UserRole.VIEWER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Analyst role required for queries"
+            detail="Analyst role required for queries",
         )
 
-    # 1. Check fast-path rule-based chat engine (Lab 06B)
-    matched, fast_path_response = fast_path.match_fast_path(request.chemical_name)
-    
     chem_key = request.chemical_name.lower().strip()
-    thresholds_list = SAMPLE_SDS_DATABASE.get(chem_key, [])
+    thresholds_list = MOCK_SDS_DATABASE_PENDING_AGENT_A_RETRIEVAL.get(chem_key, [])
 
     threshold_dicts = [
         {
@@ -264,11 +274,20 @@ async def query_chemical(
             "value": t.value,
             "unit": t.unit,
             "source_doc_id": t.sds_id,
-            "version": t.citation
+            "version": t.citation,
         }
         for t in thresholds_list
     ]
 
+    # NOTE: This endpoint only retrieves threshold data -- it never receives a current
+    # sensor reading, so it cannot run DeterministicSafetyEvaluator and must never
+    # assert SAFE or WARNING. Having threshold data on file is not a safety verdict.
+    # Use /safety/evaluate for an actual deterministic evaluation.
+    #
+    # The Lab 06B fast-path engine is not wired in here: ChatFastPath.match_fast_path()
+    # expects a full natural-language question ("what is the flash point of X"), but
+    # QueryRequest only carries a bare chemical name -- there is no free-text field to
+    # match against yet. Re-enable once QueryRequest gains a real query-text field.
     return QueryResponse(
         query_id=f"QRY_{hash(request.chemical_name) % 10000:04d}",
         query=request,
@@ -277,9 +296,8 @@ async def query_chemical(
             "retrieved_docs": [],
             "thresholds": threshold_dicts,
             "conflicts": [],
-            "final_safety_state": "SAFE" if thresholds_list else "UNKNOWN",
-            "fast_path_answer": fast_path_response if matched else None
-        }
+            "final_safety_state": "UNKNOWN",
+        },
     )
 
 
@@ -294,10 +312,10 @@ async def sign_off_alert(
     alert_id: str,
     approved: bool,
     notes: Optional[str] = "",
-    user: UserInfo = Depends(require_role(UserRole.ADMIN))
+    user: UserInfo = Depends(require_role(UserRole.ADMIN)),
 ):
     """Sign off on an alert (Supervisor/Admin only).
-    
+
     Requires: ADMIN role.
     """
     found_alert = None
@@ -311,39 +329,32 @@ async def sign_off_alert(
             break
 
     if not found_alert:
-        # If alert_id not in active registry, simulate sign-off recording
-        found_alert = {
-            "alert_id": alert_id,
-            "status": "approved" if approved else "rejected",
-            "signed_by": user.username,
-            "notes": notes
-        }
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Alert '{alert_id}' not found in the review queue",
+        )
 
-    return {
-        "status": "sign_off_recorded",
-        "alert": found_alert
-    }
+    return {"status": "sign_off_recorded", "alert": found_alert}
 
 
 # ============================================================================
 # Error Handlers
 # ============================================================================
 
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     """Custom error response format."""
     return JSONResponse(
         status_code=exc.status_code,
-        content={
-            "error": exc.detail,
-            "status_code": exc.status_code
-        }
+        content={"error": exc.detail, "status_code": exc.status_code},
     )
 
 
 # ============================================================================
 # Root Route
 # ============================================================================
+
 
 @app.get("/")
 async def root():
@@ -352,5 +363,5 @@ async def root():
         "name": "ChemSentry API",
         "version": "0.1.0",
         "docs": "/docs",
-        "openapi": "/openapi.json"
+        "openapi": "/openapi.json",
     }

@@ -27,7 +27,7 @@ class ChatFastPath:
 
     def match_fast_path(self, query_text: str) -> tuple[bool, str | None]:
         """Attempt fast-path rule matching for user safety query.
-        
+
         Returns:
             Tuple of (is_matched: bool, response_text: Optional[str])
         """

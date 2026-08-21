@@ -1,6 +1,5 @@
 """Evidence Reconciler -- version comparison, Jaccard conflict detection, authority hierarchy (M3)."""
 
-
 from agents.protocols.schemas import ProvenancedThreshold
 
 # NOTE: reconciliation-policy default, not a per-chemical safety threshold -- this

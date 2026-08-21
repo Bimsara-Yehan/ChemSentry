@@ -4,18 +4,21 @@ Connects to PostgreSQL and provides a database session for all API routes.
 """
 
 import os
+
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import Session, sessionmaker
 
 # Database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://chemsentry:localdev@localhost:5432/chemsentry")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql://chemsentry:localdev@localhost:5432/chemsentry"
+)
 
 # Create SQLAlchemy engine
 engine = create_engine(
     DATABASE_URL,
     echo=False,  # Set to True for SQL query logging
-    pool_pre_ping=True  # Verify connections before using
+    pool_pre_ping=True,  # Verify connections before using
 )
 
 # Session factory
@@ -27,7 +30,7 @@ Base = declarative_base()
 
 def get_db() -> Session:
     """FastAPI dependency: Provide database session to routes.
-    
+
     Usage:
         @app.get("/query")
         def query_route(db: Session = Depends(get_db)):
@@ -43,7 +46,7 @@ def get_db() -> Session:
 
 def init_db():
     """Initialize database — create all tables from ORM models.
-    
+
     Call this once on application startup to ensure schema exists.
     In production, use Alembic migrations instead.
     """
@@ -52,7 +55,7 @@ def init_db():
 
 def check_db_health() -> str:
     """Check if database is accessible.
-    
+
     Returns:
         "ok" if connected, or error message
     """
@@ -66,13 +69,13 @@ def check_db_health() -> str:
 
 def get_db_schema_info() -> dict:
     """Get information about database tables and columns (for debugging).
-    
+
     Returns:
         {table_name: [column_names, ...], ...}
     """
     inspector = inspect(engine)
     schema = {}
     for table_name in inspector.get_table_names():
-        columns = [col['name'] for col in inspector.get_columns(table_name)]
+        columns = [col["name"] for col in inspector.get_columns(table_name)]
         schema[table_name] = columns
     return schema

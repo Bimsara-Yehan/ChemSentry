@@ -107,8 +107,8 @@ uvicorn[standard]
 pydantic
 
 # Auth & security
-python-jose[cryptography]
-passlib[bcrypt]
+pyjwt
+bcrypt
 
 # Retrieval & NLP (Labs 02–06)
 nltk
