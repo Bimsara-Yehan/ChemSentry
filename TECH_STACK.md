@@ -22,7 +22,7 @@ coding. For folder structure, Git workflow, and hardware procurement, see `setup
 | **Rule-based chat fast path** | Plain Python keyword matching | Lab 06B |
 | **Severity classification** | `scikit-learn` (`DecisionTreeClassifier`, `train_test_split`, `classification_report`) | Lab 08 |
 | **Co-storage discovery** | `mlxtend` (`apriori`, `association_rules`, `TransactionEncoder`) | Lab 09 |
-| **LLM** | Anthropic API (or OpenAI) | Summarisation, translation, open-query orchestration only — never the safety decision |
+| **LLM** | Mistral API (free tier) | Summarisation, translation, open-query orchestration only — never the safety decision |
 | **Firmware** | Arduino C++ via PlatformIO | ESP32 + DHT22 |
 | **Sensor → broker** | `PubSubClient` (device side), Eclipse Mosquitto (broker), `paho-mqtt` (Python side) | TLS on port 8883 |
 | **Database** | PostgreSQL (or SQLite for local dev) via SQLAlchemy | Inventory, zones, audit log |
@@ -110,7 +110,7 @@ sqlalchemy
 psycopg2-binary          # skip if using SQLite locally
 
 # LLM
-anthropic                 # or openai
+mistralai
 
 # Testing & quality
 pytest
@@ -150,7 +150,7 @@ postgres    (postgres:16)
 |---|---|
 | M1 (crawler, extraction, indexing) | Nothing extra |
 | M2 (retrieval, ranking, evaluation) | Verify `scikit-learn` + `nltk` data downloaded and working before Week 4 |
-| M3 (classification, Apriori, LLM) | `mlxtend`; get an Anthropic/OpenAI API key issued in Week 3 |
+| M3 (classification, Apriori, LLM) | `mlxtend`; get a Mistral API key issued in Week 3 |
 | M4 (IoT, gateway, security, frontend) | PlatformIO, USB driver, Docker confirmed working, MQTT TLS certs generated |
 
 ---
