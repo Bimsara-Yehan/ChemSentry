@@ -7,7 +7,7 @@ Handles authentication (JWT token generation/validation) and authorization
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import jwt
-from passlib.context import CryptContext
+import bcrypt
 import os
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer
@@ -22,9 +22,6 @@ from api.models import UserRole, UserInfo
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-key-change-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
-
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ============================================================================
@@ -159,10 +156,9 @@ def hash_password(password: str) -> str:
     
     Note: bcrypt has a 72-byte limit on passwords. Longer passwords are truncated.
     """
-    # Truncate to 72 bytes to work with bcrypt
     password_bytes = password.encode('utf-8')[:72]
-    truncated_password = password_bytes.decode('utf-8', errors='ignore')
-    return pwd_context.hash(truncated_password)
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password_bytes, salt).decode('utf-8')
 
 
 def verify_password(plain: str, hashed: str) -> bool:
@@ -170,10 +166,8 @@ def verify_password(plain: str, hashed: str) -> bool:
     
     Note: Truncates input to 72 bytes to match bcrypt's limit.
     """
-    # Truncate to 72 bytes to work with bcrypt
     plain_bytes = plain.encode('utf-8')[:72]
-    truncated_plain = plain_bytes.decode('utf-8', errors='ignore')
-    return pwd_context.verify(truncated_plain, hashed)
+    return bcrypt.checkpw(plain_bytes, hashed.encode('utf-8'))
 
 
 # ============================================================================
