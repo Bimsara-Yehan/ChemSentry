@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChemSentry — Agentic AI Chemical Safety for Industrial SMEs</title>
+    <meta name="description" content="Dynamic chemical store room monitoring with retrieved SDS thresholds, multi-supplier reconciliation, and multi-lingual Sinhala & Tamil safety cards.">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+    
+    <!-- Google Analytics 4 (GA4) Tag - Lecture 12 Deliverable -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-CHEMSENTRY01"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      // Track Page View
+      gtag('config', 'G-CHEMSENTRY01', {
+        'page_title': 'ChemSentry Landing Page',
+        'page_path': '/'
+      });
+
+      // Custom Conversion Event Handler
+      function trackTrialSignup(tierName) {
+        gtag('event', 'conversion_trial_signup', {
+          'event_category': 'Engagement',
+          'event_label': tierName,
+          'value': 1.0
+        });
+        alert('Thank you for requesting a demo of the ' + tierName + ' tier! Our team will contact you shortly.');
+      }
+    </script>
+
+    <style>
+        :root {
+            --bg-dark: #0D0F12;
+            --bg-card: #16191D;
+            --border-color: #2A2F36;
+            --text-main: #E2E8F0;
+            --text-muted: #94A3B8;
+            --teal: #0F6B62;
+            --teal-light: #148A7E;
+            --indigo: #3A3FA0;
+            --amber: #D97706;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: var(--bg-dark); color: var(--text-main); font-family: 'IBM Plex Sans', sans-serif; line-height: 1.6; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+        header { padding: 30px 0; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-family: 'Space Grotesk', sans-serif; font-size: 24px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
+        .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, var(--teal), var(--indigo)); border-radius: 8px; display: grid; place-items: center; }
+
+        .hero { padding: 80px 0 60px; text-align: center; max-width: 850px; margin: 0 auto; }
+        .hero h1 { font-family: 'Space Grotesk', sans-serif; font-size: 48px; font-weight: 700; line-height: 1.15; color: #fff; margin-bottom: 20px; }
+        .hero p { font-size: 18px; color: var(--text-muted); margin-bottom: 32px; }
+        
+        .btn-primary { background: var(--teal); color: #fff; border: none; padding: 14px 28px; border-radius: 8px; font-weight: 600; font-size: 16px; cursor: pointer; text-decoration: none; display: inline-block; transition: background 0.2s; }
+        .btn-primary:hover { background: var(--teal-light); }
+
+        .features { padding: 60px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+        .feature-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 30px; }
+        .feature-card h3 { font-family: 'Space Grotesk', sans-serif; font-size: 20px; color: #fff; margin-bottom: 12px; }
+
+        .pricing { padding: 60px 0 80px; }
+        .pricing-title { text-align: center; margin-bottom: 48px; }
+        .pricing-title h2 { font-family: 'Space Grotesk', sans-serif; font-size: 36px; color: #fff; }
+
+        .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; }
+        .price-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px; padding: 32px 24px; position: relative; display: flex; flex-direction: column; }
+        .price-card.featured { border-color: var(--teal); box-shadow: 0 0 20px rgba(15, 107, 98, 0.3); }
+        .price-title { font-family: 'Space Grotesk', sans-serif; font-size: 22px; color: #fff; margin-bottom: 8px; }
+        .price-amount { font-size: 32px; font-weight: 700; color: #fff; margin-bottom: 16px; font-family: 'IBM Plex Mono', monospace; }
+        .price-features { list-style: none; margin-bottom: 28px; flex-grow: 1; }
+        .price-features li { margin-bottom: 10px; font-size: 14px; color: var(--text-muted); }
+
+        footer { border-top: 1px solid var(--border-color); padding: 40px 0; text-align: center; font-size: 14px; color: var(--text-muted); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <div class="logo-icon">CS</div>
+                ChemSentry
+            </div>
+            <a href="http://localhost:5173" class="btn-primary" onclick="gtag('event', 'click_dashboard', {'event_category': 'Navigation'});">Launch Live Dashboard</a>
+        </header>
+
+        <section class="hero">
+            <h1>Dynamic Chemical Safety Monitoring for Process SMEs</h1>
+            <p>ChemSentry connects physical chemical store room sensors with supplier Safety Data Sheets (SDSs). <strong>No safety thresholds are hardcoded</strong> — every limit is dynamically retrieved, reconciled, and cited from source documents at query time.</p>
+            <button class="btn-primary" onclick="trackTrialSignup('Free Tier');">Start Free Trial (25 Substances)</button>
+        </section>
+
+        <section class="features">
+            <div class="feature-card">
+                <h3>📖 Classical IR Retrieval</h3>
+                <p>Position-aware inverted index, k-gram & Levenshtein tolerant matching, and TF-IDF cosine ranking extract exact safety limits directly from PDF manuals.</p>
+            </div>
+            <div class="feature-card">
+                <h3>🔀 Supplier Conflict Detection</h3>
+                <p>Reverse Jaccard duplicate detection flags when two suppliers issue conflicting storage temperature ceilings for the same substance.</p>
+            </div>
+            <div class="feature-card">
+                <h3>🛡️ Human-in-the-Loop</h3>
+                <p>Deterministic SAFE / WARNING verdicts route straight to qualified Safety Officers for sign-off before alerts can be dismissed.</p>
+            </div>
+        </section>
+
+        <section class="pricing">
+            <div class="pricing-title">
+                <h2>Commercial Subscription Tiers</h2>
+                <p style="color: var(--text-muted);">Serving Sri Lankan process-industry SMEs (textiles, rubber, food & tea processing)</p>
+            </div>
+
+            <div class="pricing-grid">
+                <div class="price-card">
+                    <div class="price-title">Free Tier</div>
+                    <div class="price-amount">$0 / mo</div>
+                    <ul class="price-features">
+                        <li>✓ Up to 25 substances</li>
+                        <li>✓ Document reconciliation</li>
+                        <li>✓ 1 User seat</li>
+                        <li>✗ No IoT hardware support</li>
+                    </ul>
+                    <button class="btn-primary" style="width: 100%; background: #2A2F36;" onclick="trackTrialSignup('Free Tier');">Get Started</button>
+                </div>
+
+                <div class="price-card featured">
+                    <div class="price-title">Standard Tier</div>
+                    <div class="price-amount">$49 / mo</div>
+                    <ul class="price-features">
+                        <li>✓ Up to 150 substances</li>
+                        <li>✓ 2 ESP32 Sensor Zones</li>
+                        <li>✓ 5 User seats</li>
+                        <li>✓ Sinhala & Tamil Safety Cards</li>
+                    </ul>
+                    <button class="btn-primary" style="width: 100%;" onclick="trackTrialSignup('Standard Tier');">Select Standard</button>
+                </div>
+
+                <div class="price-card">
+                    <div class="price-title">Professional</div>
+                    <div class="price-amount">$149 / mo</div>
+                    <ul class="price-features">
+                        <li>✓ Unlimited substances</li>
+                        <li>✓ 10 Sensor Zones</li>
+                        <li>✓ Incident precedent search</li>
+                        <li>✓ Audit log export</li>
+                    </ul>
+                    <button class="btn-primary" style="width: 100%; background: #2A2F36;" onclick="trackTrialSignup('Professional Tier');">Contact Sales</button>
+                </div>
+
+                <div class="price-card">
+                    <div class="price-title">Self-Hosted</div>
+                    <div class="price-amount">$1,800 / yr</div>
+                    <ul class="price-features">
+                        <li>✓ On-premises deployment</li>
+                        <li>✓ Zero cloud data egress</li>
+                        <li>✓ Export-client compliance</li>
+                        <li>✓ Dedicated support</li>
+                    </ul>
+                    <button class="btn-primary" style="width: 100%; background: #2A2F36;" onclick="trackTrialSignup('Self-Hosted Tier');">Request Demo</button>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            ChemSentry © 2026 — Built for IT3041 Information Retrieval & Web Analytics Group Assignment
+        </footer>
+    </div>
+</body>
+</html>
