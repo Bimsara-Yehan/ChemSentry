@@ -11,10 +11,10 @@ from a versioned source document at query time and cited back to the user. Built
 
 ## Setup
 
-See [setup.md](setup.md) for the full environment setup guide: repository structure,
+See [docs/setup.md](docs/setup.md) for the full environment setup guide: repository structure,
 software to install, hardware to procure, and the team Git workflow.
 
 ## Project context
 
 See [CLAUDE.md](CLAUDE.md) for the architecture summary and hard constraints, and
-[ChemSentry_Final_Plan.md](ChemSentry_Final_Plan.md) for the complete project plan.
+[docs/ChemSentry_Final_Plan.md](docs/ChemSentry_Final_Plan.md) for the complete project plan.
