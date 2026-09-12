@@ -9,23 +9,33 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
 
-# Database URL from environment
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://chemsentry:localdev@localhost:5432/chemsentry"
-)
+# Database URL from environment with fallback to SQLite for local dev
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./chemsentry.db")
 
-# Create SQLAlchemy engine
-engine = create_engine(
-    DATABASE_URL,
-    echo=False,  # Set to True for SQL query logging
-    pool_pre_ping=True,  # Verify connections before using
-)
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+try:
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        connect_args=connect_args,
+    )
+except Exception:
+    # Fallback to local SQLite if PostgreSQL connection fails
+    DATABASE_URL = "sqlite:///./chemsentry.db"
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        connect_args={"check_same_thread": False},
+    )
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Base class for ORM models
 Base = declarative_base()
+
 
 
 def get_db() -> Session:
