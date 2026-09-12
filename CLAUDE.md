@@ -46,10 +46,10 @@ Sensors (MQTT) → Agent C (env monitor, NO chemical knowledge)
 - IoT: ESP32 + DHT22, MQTT/TLS (Mosquitto), `paho-mqtt`
 - DB: PostgreSQL (or SQLite for local dev) via SQLAlchemy
 - Frontend: React + Vite + Tailwind + Recharts
-- Full stack detail: see `/docs/architecture.md` and `setup.md`
+- Full stack detail: see `/docs/architecture.md` and `docs/setup.md`
 
 ## Repository layout
-One top-level directory per team member's slice — see `setup.md` Section 1 for the full
+One top-level directory per team member's slice — see `docs/setup.md` Section 1 for the full
 tree. Don't scatter one person's work across another's directory; it breaks individual
 contribution tracking for the viva.
 
@@ -74,5 +74,5 @@ The IR evaluation suite (`evaluation/`) is a Week 5 deliverable, not a Week 9 on
 to build a retrieval feature without a corresponding benchmark query, flag it.
 
 ## Full plans
-`setup.md` — environment setup, installs, hardware, Git workflow
+`docs/setup.md` — environment setup, installs, hardware, Git workflow
 `docs/architecture.md` — full system design, agent responsibilities, evaluation plan
