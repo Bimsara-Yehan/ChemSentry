@@ -21,12 +21,12 @@ Q019,feric chloride,misspelled,ferric chloride,1-char deletion in first token
 Q020,potasium permanganate,misspelled,potassium permanganate,1-char deletion (double letter dropped)
 Q021,*chlorate,wildcard,sodium chlorate,suffix wildcard per Final Plan Section 5.3
 Q022,*chloride,wildcard,ferric chloride,suffix wildcard
-Q023,*ol,wildcard,ethanol; methanol,suffix wildcard matches -ol alcohols
-Q024,sodium *,wildcard,sodium hydroxide; sodium chlorate,prefix wildcard on shared first token
+Q023,*ol,wildcard,ethanol; methanol; isopropyl alcohol,suffix wildcard matches -ol alcohols (incl. "alcohol" itself via its second token)
+Q024,sodium *,wildcard,sodium hydroxide; sodium chlorate; sodium hypochlorite,prefix wildcard on shared first token
 Q025,*acid,wildcard,hydrochloric acid; sulfuric acid; nitric acid,suffix wildcard on acid family
-Q026,hydro*,wildcard,hydrochloric acid; hydrogen peroxide,prefix wildcard
+Q026,hydro*,wildcard,hydrochloric acid; hydrogen peroxide; sodium hydroxide,prefix wildcard (incl. "hydroxide" via its own token in "sodium hydroxide")
 Q027,*peroxide,wildcard,hydrogen peroxide,suffix wildcard
-Q028,*ate,wildcard,sodium chlorate; potassium permanganate,suffix wildcard on -ate family
+Q028,*ate,wildcard,sodium chlorate; potassium permanganate; ethyl acetate,suffix wildcard on -ate family (incl. "acetate" via its own token)
 Q029,per*,wildcard,hydrogen peroxide; potassium permanganate,prefix wildcard
 Q030,*ane,wildcard,,suffix wildcard with no vocabulary match - tests empty-result handling
 Q031,storage temperature,phrase,,exact adjacent 2-word phrase; tests positional index phrase matching

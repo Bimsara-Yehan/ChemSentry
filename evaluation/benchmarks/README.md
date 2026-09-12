@@ -18,7 +18,15 @@
 The query set and category split are final. `expected_chemicals` for the
 exact/misspelled/wildcard rows is filled in against the placeholder vocabulary in
 `agents/agent_a_retrieval/vocabulary.py`, so those rows are usable for entity-resolution
-evaluation (Layer 2) right now.
+evaluation (Layer 2) right now — see `evaluation/run_layer2_eval.py` and
+`evaluation/results/layer2_entity_resolution.md` for the actual run.
+
+Q023, Q024, Q026, and Q028's `expected_chemicals` were corrected: the original
+hand-assessment missed matches where the pattern lands on a *non-first* token of a
+multi-word term (e.g. `*ol` also matches "isopropyl **alcohol**", `per*` matches
+"hydrogen **per**oxide" as already noted in Q029). Caught by cross-checking
+`resolve_wildcard()`'s output against every row by hand before trusting either as
+ground truth — see `evaluation/run_layer2_eval.py`'s module docstring.
 
 Phrase and proximity rows test document-content retrieval, not name resolution, so their
 `expected_chemicals` is intentionally blank — there's no real SDS text yet to hand-assess
