@@ -37,7 +37,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-
 def get_db() -> Session:
     """FastAPI dependency: Provide database session to routes.
 
