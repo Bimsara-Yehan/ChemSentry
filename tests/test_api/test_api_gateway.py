@@ -3,11 +3,35 @@
 Tests health check, authentication (JWT login), protected routes, RBAC, safety evaluation, and error handling.
 """
 
+from datetime import date
+
 from fastapi.testclient import TestClient
 
-from api.main import app
+import api.main as main
+from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
+from api.database import SessionLocal
+from api.db_models import AuditLogRecord
+from extraction.models import SDSMetadata
+from extraction.pipeline import extract_document
 
-client = TestClient(app)
+# api.main.retriever normally loads from corpus/raw/, which is gitignored and
+# empty on a fresh clone/CI checkout -- these tests can't depend on whatever
+# PDFs happen to be sitting on a given machine. Override it with a small
+# fixture corpus built through the real extraction pipeline (not a
+# hand-built ProvenancedThreshold) so this still exercises the genuine
+# extraction -> provenance-bridge -> retrieval path end to end.
+_toluene_doc = extract_document(
+    "SECTION 7: Handling and storage\nStore below 25 C.\n",
+    SDSMetadata(
+        document_id="TEST_TOL_001",
+        chemical_name="Toluene",
+        supplier="ABC Chemicals",
+        retrieval_date=date.today(),
+    ),
+)
+main.retriever = CorpusRetriever([_toluene_doc])
+
+client = TestClient(app=main.app)
 
 
 def test_root_endpoint():
@@ -118,7 +142,7 @@ def test_safety_evaluate_warning():
     data = response.json()
     assert data["state"] == "WARNING"
     assert data["threshold_value"] == 25.0
-    assert "ABC Chemicals SDS" in data["provenance"]["citation"]
+    assert "ABC Chemicals" in data["provenance"]["citation"]
 
 
 def test_safety_evaluate_safe():
@@ -213,3 +237,54 @@ def test_query_never_asserts_a_safety_verdict():
     data = response.json()
     assert data["evidence"]["final_safety_state"] == "UNKNOWN"
     assert len(data["evidence"]["thresholds"]) > 0  # thresholds were still retrieved
+
+
+def test_alert_and_sign_off_are_both_written_to_the_audit_log():
+    """Plan §17 requires an append-only audit log of every alert and
+    sign-off -- api/models.py's AuditLog Pydantic model existed but was
+    never instantiated anywhere before api/db_models.py. This checks the
+    real table, not just the API response shape."""
+    login_analyst = client.post(
+        "/auth/login", json={"username": "analyst_user", "password": "analyst123"}
+    )
+    headers_analyst = {
+        "Authorization": f"Bearer {login_analyst.json()['access_token']}"
+    }
+
+    eval_payload = {
+        "chemical_name": "Toluene",
+        "zone_id": "Zone_B",
+        "metric_name": "max_storage_temperature",
+        "current_value": 40.0,
+        "unit": "C",
+    }
+    client.post("/safety/evaluate", json=eval_payload, headers=headers_analyst)
+
+    alerts = client.get("/alerts", headers=headers_analyst).json()["alerts"]
+    alert_id = alerts[-1]["alert_id"]
+
+    login_admin = client.post(
+        "/auth/login", json={"username": "admin_user", "password": "admin123"}
+    )
+    headers_admin = {"Authorization": f"Bearer {login_admin.json()['access_token']}"}
+    client.post(
+        "/admin/sign-off",
+        params={"alert_id": alert_id, "approved": True, "notes": "checked"},
+        headers=headers_admin,
+    )
+
+    db = SessionLocal()
+    try:
+        entries = (
+            db.query(AuditLogRecord)
+            .filter(AuditLogRecord.resource == alert_id)
+            .order_by(AuditLogRecord.id)
+            .all()
+        )
+    finally:
+        db.close()
+
+    actions = [entry.action for entry in entries]
+    assert actions == ["alert_created", "sign_off"]
+    assert entries[0].user_id == "analyst_user"
+    assert entries[1].user_id == "admin_user"
