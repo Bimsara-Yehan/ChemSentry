@@ -1,0 +1,66 @@
+document_id,chemical_name,claim_type,expected_value,expected_unit,notes
+179124,Acetone,cas_number,67-64-1,,verified against real Section 1 text
+179124,Acetone,storage_temperature_min,,,"real text: ""Recommended storage temperature see product label"" -- no number present"
+179124,Acetone,storage_temperature_max,,,same field as above -- no number present
+179124,Acetone,flash_point,-17.0,C,"real text: ""Flash point : -17,0 \xb0C"""
+179124,Acetone,boiling_point,56.0,C,"real text: ""Boiling point/boiling range : 56 \xb0C"""
+216763,Hydrogen peroxide solution,cas_number,7722-84-1,,"verified -- not in metadata's Section-1 parse, but present and correct elsewhere in the document (Section 3)"
+216763,Hydrogen peroxide solution,storage_temperature_min,2.0,C,real Section 7 label:value field
+216763,Hydrogen peroxide solution,storage_temperature_max,8.0,C,real Section 7 label:value field
+216763,Hydrogen peroxide solution,flash_point,,,"real text: ""Flash point : Not applicable"""
+216763,Hydrogen peroxide solution,boiling_point,,,"real text: ""Boiling point : No data available"""
+221465,Sodium hydroxide,cas_number,1310-73-2,,verified against real Section 1 text
+221465,Sodium hydroxide,storage_temperature_min,,,no storage-temperature field present in Section 7 at all
+221465,Sodium hydroxide,storage_temperature_max,,,no storage-temperature field present in Section 7 at all
+221465,Sodium hydroxide,flash_point,,,"real text: ""Flash point Not applicable"""
+221465,Sodium hydroxide,boiling_point,1390.0,C,"real text: ""Initial boiling point 1.390 \xb0C"" -- European thousands separator, see extraction/value_extractor.py fix"
+238511,Potassium permanganate,cas_number,7722-64-7,,verified against real Section 1 text
+238511,Potassium permanganate,storage_temperature_min,,,"real text: ""Recommended storage temperature see product label"" -- no number present"
+238511,Potassium permanganate,storage_temperature_max,,,same field as above -- no number present
+238511,Potassium permanganate,flash_point,,,"real text: ""Flash point : Not applicable"""
+238511,Potassium permanganate,boiling_point,,,"real text: ""Boiling point : No data available"""
+258105 (1),Sulfuric acid,cas_number,7664-93-9,,verified against real Section 1 text
+258105 (1),Sulfuric acid,storage_temperature_min,,,no storage-temperature field present in Section 7 at all
+258105 (1),Sulfuric acid,storage_temperature_max,,,no storage-temperature field present in Section 7 at all
+258105 (1),Sulfuric acid,flash_point,,,"real text: ""Flash point No data available"""
+258105 (1),Sulfuric acid,boiling_point,290.0,C,"real text: ""Initial boiling point 290 \xb0C - lit."""
+258105,Sulfuric acid,cas_number,7664-93-9,,verified against real Section 1 text -- second real supplier document for the same chemical
+258105,Sulfuric acid,storage_temperature_min,,,no storage-temperature field present in Section 7 at all
+258105,Sulfuric acid,storage_temperature_max,,,no storage-temperature field present in Section 7 at all
+258105,Sulfuric acid,flash_point,,,"real text: ""Flash point No data available"""
+258105,Sulfuric acid,boiling_point,290.0,C,"real text: ""Initial boiling point 290 \xb0C - lit."""
+51976,Ethanol,cas_number,64-17-5,,verified against real Section 1 text
+51976,Ethanol,storage_temperature_min,,,"real text: ""Recommended storage temperature if relevant, see [product label]"" -- no number present"
+51976,Ethanol,storage_temperature_max,,,same field as above -- no number present
+51976,Ethanol,flash_point,13.0,C,"real text: ""Flash point : 13 \xb0C"""
+51976,Ethanol,boiling_point,78.0,C,"real text: ""Boiling point/boiling range : 78 \xb0C"""
+96479,Zinc oxide,cas_number,1314-13-2,,verified against real Section 1 text
+96479,Zinc oxide,storage_temperature_min,,,no storage-temperature field present in Section 7 at all
+96479,Zinc oxide,storage_temperature_max,,,no storage-temperature field present in Section 7 at all
+96479,Zinc oxide,flash_point,,,"real text: ""Flash point : Not applicable"""
+96479,Zinc oxide,boiling_point,,,"real text: ""Boiling point : No data available"""
+c0759,Citric acid,cas_number,77-92-9,,verified against real Section 1 text
+c0759,Citric acid,storage_temperature_min,15.0,C,real Section 7 label:value field (the wrapped-across-lines case that motivated the label regex fix)
+c0759,Citric acid,storage_temperature_max,25.0,C,real Section 7 label:value field
+c0759,Citric acid,flash_point,,,"real text: ""Flash point : Not applicable"""
+c0759,Citric acid,boiling_point,200.0,C,"real text: ""Boiling point/boiling range : 200 \xb0C"""
+h1758,Hydrochloric acid,cas_number,7647-01-0,,verified against real Section 1 text
+h1758,Hydrochloric acid,storage_temperature_min,,,no storage-temperature field present in Section 7 at all
+h1758,Hydrochloric acid,storage_temperature_max,,,no storage-temperature field present in Section 7 at all
+h1758,Hydrochloric acid,flash_point,,,"real text: ""Flash point Not applicable"""
+h1758,Hydrochloric acid,boiling_point,100.0,C,"CAVEAT: real text is "">100 \xb0C - lit."" (a lower bound, not an exact value) -- extractor reports the bare number 100.0 without the inequality qualifier; counted as a match here since the number itself is correct, but this is a real precision nuance worth flagging, not a clean case"
+i9516,2-Propanol,cas_number,67-63-0,,verified against real Section 1 text
+i9516,2-Propanol,storage_temperature_min,,,no storage-temperature field present in Section 7 at all
+i9516,2-Propanol,storage_temperature_max,,,no storage-temperature field present in Section 7 at all
+i9516,2-Propanol,flash_point,12.0,C,"real text: ""Flash point 12,0 \xb0C - closed cup"""
+i9516,2-Propanol,boiling_point,82.0,C,"real text: ""Initial boiling point 82 \xb0C"""
+s5761,Sodium bicarbonate,cas_number,144-55-8,,verified against real Section 1 text
+s5761,Sodium bicarbonate,storage_temperature_min,,,no storage-temperature field present in Section 7 at all
+s5761,Sodium bicarbonate,storage_temperature_max,,,no storage-temperature field present in Section 7 at all
+s5761,Sodium bicarbonate,flash_point,,,"real text: ""Flash point Not applicable"""
+s5761,Sodium bicarbonate,boiling_point,,,"real text: ""Initial boiling point Not applicable"""
+u5128,Urea,cas_number,57-13-6,,verified against real Section 1 text
+u5128,Urea,storage_temperature_min,,,no storage-temperature field present in Section 7 at all
+u5128,Urea,storage_temperature_max,,,no storage-temperature field present in Section 7 at all
+u5128,Urea,flash_point,,,"real text: ""Flash point Not applicable"""
+u5128,Urea,boiling_point,,,"real text: ""Decomposes below the boiling point."" -- qualitative, no number present"
