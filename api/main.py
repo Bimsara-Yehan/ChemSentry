@@ -94,6 +94,17 @@ def _load_retriever() -> CorpusRetriever:
 
 retriever = _load_retriever()
 
+# Called at import time, not only registered as a startup event: FastAPI's
+# on_event("startup") does not fire for a plain `TestClient(app)` unless it's
+# used as a context manager (`with TestClient(app) as client:`), which this
+# project's test suite doesn't do. Relying on the event alone meant tables
+# were only ever created if some earlier test run had already left them on
+# disk -- true locally by accident, false on a fresh clone or in CI, where
+# every /alerts, /admin/sign-off, and WARNING-path /safety/evaluate call
+# failed with "no such table: alerts". create_all() is idempotent, so
+# calling it here and again in the startup event below is harmless.
+init_db()
+
 
 # ============================================================================
 # Lifecycle Events
