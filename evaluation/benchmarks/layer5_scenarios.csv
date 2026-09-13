@@ -1,0 +1,16 @@
+scenario_id,chemical_name,zone_id,metric_name,current_value,unit,expected_state,notes
+E001,citric acid,Zone_A,max_storage_temperature,20.0,C,SAFE,real threshold max=25.0C; 20 is clearly below it
+E002,citric acid,Zone_A,min_storage_temperature,20.0,C,SAFE,real threshold min=15.0C; 20 is clearly above it
+E003,hydrogen peroxide solution,Zone_A,max_storage_temperature,5.0,C,SAFE,real threshold max=8.0C; 5 is clearly below it
+E004,ethanol,Zone_A,flash_point,5.0,C,SAFE,real flash point=13.0C; 5 is well below (not approaching ignition risk)
+E005,ethanol,Zone_A,boiling_point,40.0,C,SAFE,real boiling point=78.0C; 40 is clearly below it
+E006,citric acid,Zone_A,max_storage_temperature,30.0,C,WARNING,real threshold max=25.0C; 30 exceeds it
+E007,citric acid,Zone_A,min_storage_temperature,10.0,C,WARNING,real threshold min=15.0C; 10 is at/below it
+E008,hydrogen peroxide solution,Zone_A,max_storage_temperature,10.0,C,WARNING,real threshold max=8.0C; 10 exceeds it
+E009,acetone,Zone_A,flash_point,-10.0,C,WARNING,real flash point=-17.0C; -10 exceeds it (closer to ignition risk than the retrieved limit)
+E010,sulfuric acid,Zone_A,boiling_point,295.0,C,WARNING,"real boiling point=290.0C (both real supplier documents agree); 295 exceeds it -- same scenario verified live against the API earlier this session"
+E011,potassium permanganate,Zone_A,max_storage_temperature,25.0,C,UNKNOWN,real corpus has a document for this chemical but it contains no numeric storage-temperature value -- nothing retrieved
+E012,toluene,Zone_A,max_storage_temperature,25.0,C,UNKNOWN,chemical is not in this corpus at all -- name resolution finds nothing
+E013,citric acid,Zone_A,max_storage_temperature,20.0,F,UNKNOWN,real threshold exists (25.0C) but request unit (F) does not match -- state machine refuses to assume a conversion
+E014,zinc oxide,Zone_A,flash_point,25.0,C,UNKNOWN,real corpus document for this chemical has no flash point extracted
+E015,urea,Zone_A,boiling_point,25.0,C,UNKNOWN,real corpus document for this chemical has no boiling point extracted
