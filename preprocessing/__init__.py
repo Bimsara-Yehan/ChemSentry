@@ -9,9 +9,9 @@ Public API:
 """
 
 from preprocessing.pipeline import preprocess, preprocess_query
-from preprocessing.tokenizer import tokenize
-from preprocessing.stopwords import remove_stopwords
 from preprocessing.stemmer import selective_stem
+from preprocessing.stopwords import remove_stopwords
+from preprocessing.tokenizer import tokenize
 
 __all__ = [
     "preprocess",

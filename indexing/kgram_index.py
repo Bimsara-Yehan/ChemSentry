@@ -184,10 +184,7 @@ class KGramIndex:
         """
         if len(substring) < self._k:
             return [substring] if substring else []
-        return [
-            substring[i : i + self._k]
-            for i in range(len(substring) - self._k + 1)
-        ]
+        return [substring[i : i + self._k] for i in range(len(substring) - self._k + 1)]
 
     @staticmethod
     def _matches_pattern(term: str, pattern: str) -> bool:
@@ -284,9 +281,7 @@ class KGramIndex:
         return {
             "k": self._k,
             "vocabulary": sorted(self._vocabulary),
-            "index": {
-                kgram: sorted(terms) for kgram, terms in self._index.items()
-            },
+            "index": {kgram: sorted(terms) for kgram, terms in self._index.items()},
         }
 
     @classmethod
@@ -294,7 +289,5 @@ class KGramIndex:
         """Deserialise a k-gram index from a dict."""
         kgram = cls(k=data.get("k", 3))
         kgram._vocabulary = set(data.get("vocabulary", []))
-        kgram._index = {
-            kg: set(terms) for kg, terms in data.get("index", {}).items()
-        }
+        kgram._index = {kg: set(terms) for kg, terms in data.get("index", {}).items()}
         return kgram

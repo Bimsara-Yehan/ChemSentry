@@ -25,10 +25,10 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+
 
 class SourceAuthority(str, Enum):
     """Source authority hierarchy (plan §7).
@@ -79,6 +79,7 @@ class ExtractionMethod(str, Enum):
 # Document-level metadata
 # ---------------------------------------------------------------------------
 
+
 class SDSMetadata(BaseModel):
     """Versioning metadata for a single Safety Data Sheet (plan §10).
 
@@ -121,6 +122,7 @@ class SDSMetadata(BaseModel):
 # ---------------------------------------------------------------------------
 # Extraction-level provenance
 # ---------------------------------------------------------------------------
+
 
 class ExtractionResult(BaseModel):
     """A single extracted value with full provenance (plan §9).
@@ -166,6 +168,7 @@ class ExtractionResult(BaseModel):
 # ---------------------------------------------------------------------------
 # Fully processed document — ready for indexing
 # ---------------------------------------------------------------------------
+
 
 class ProcessedDocument(BaseModel):
     """A fully processed SDS document, ready for indexing.

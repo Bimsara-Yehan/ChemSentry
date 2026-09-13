@@ -16,8 +16,7 @@ WHY HAND-BUILT (not sklearn or whoosh)?
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 @dataclass
@@ -248,7 +247,6 @@ class InvertedIndex:
         idx._doc_lengths = data.get("doc_lengths", {})
         for term, postings in data.get("index", {}).items():
             idx._index[term] = [
-                Posting(doc_id=p["doc_id"], term_frequency=p["tf"])
-                for p in postings
+                Posting(doc_id=p["doc_id"], term_frequency=p["tf"]) for p in postings
             ]
         return idx

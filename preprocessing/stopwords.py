@@ -40,27 +40,73 @@ _BASE_STOPWORDS: set[str] = set(_nltk_stopwords.words("english"))
 # Words to REMOVE from the stop list (preserve in tokens).
 # Negation is safety-critical: "do NOT store near heat sources."
 _PRESERVE: set[str] = {
-    "not", "no", "nor", "don", "don't", "doesn", "doesn't",
-    "didn", "didn't", "won", "won't", "shouldn", "shouldn't",
-    "couldn", "couldn't", "mustn", "mustn't", "never", "without",
-    "against", "above", "below", "under", "over",  # directional — relevant for limits
+    "not",
+    "no",
+    "nor",
+    "don",
+    "don't",
+    "doesn",
+    "doesn't",
+    "didn",
+    "didn't",
+    "won",
+    "won't",
+    "shouldn",
+    "shouldn't",
+    "couldn",
+    "couldn't",
+    "mustn",
+    "mustn't",
+    "never",
+    "without",
+    "against",
+    "above",
+    "below",
+    "under",
+    "over",  # directional — relevant for limits
 }
 
 # Words to ADD — SDS boilerplate that appears everywhere and helps nothing.
 _BOILERPLATE: set[str] = {
-    "section", "page", "date", "version", "revision", "issued",
-    "supersedes", "printed", "sds", "safety", "data", "sheet",
-    "material", "product", "substance", "mixture", "company",
-    "telephone", "fax", "email", "address", "emergency",
-    "information", "regulation", "directive", "according",
-    "annex", "regulation", "classified", "labelling",
-    "ghs", "clp", "reach", "osha", "whmis",
+    "section",
+    "page",
+    "date",
+    "version",
+    "revision",
+    "issued",
+    "supersedes",
+    "printed",
+    "sds",
+    "safety",
+    "data",
+    "sheet",
+    "material",
+    "product",
+    "substance",
+    "mixture",
+    "company",
+    "telephone",
+    "fax",
+    "email",
+    "address",
+    "emergency",
+    "information",
+    "regulation",
+    "directive",
+    "according",
+    "annex",
+    "regulation",
+    "classified",
+    "labelling",
+    "ghs",
+    "clp",
+    "reach",
+    "osha",
+    "whmis",
 }
 
 # Final stop-word set: base – preserve + boilerplate.
-STOPWORDS: frozenset[str] = frozenset(
-    (_BASE_STOPWORDS - _PRESERVE) | _BOILERPLATE
-)
+STOPWORDS: frozenset[str] = frozenset((_BASE_STOPWORDS - _PRESERVE) | _BOILERPLATE)
 
 
 def remove_stopwords(tokens: list[str]) -> list[str]:

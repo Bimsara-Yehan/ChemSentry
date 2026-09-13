@@ -28,7 +28,6 @@ from __future__ import annotations
 import re
 import signal
 import sys
-from typing import Optional
 
 from extraction.models import (
     ClaimType,
@@ -47,6 +46,7 @@ REGEX_TIMEOUT_SECONDS: int = 5
 
 class RegexTimeoutError(Exception):
     """Raised when a regex operation exceeds the timeout."""
+
     pass
 
 
@@ -73,6 +73,7 @@ def _regex_findall_safe(
         RegexTimeoutError: If the regex exceeds the timeout (Unix only).
     """
     if sys.platform != "win32" and hasattr(signal, "SIGALRM"):
+
         def _handler(signum, frame):
             raise RegexTimeoutError(
                 f"Regex timed out after {timeout}s on pattern {pattern.pattern!r}"
@@ -133,8 +134,7 @@ _P_CODE_RE = re.compile(r"\b(P\d{3}(?:\s*\+\s*P\d{3})*)\b")
 
 # Exposure limits (TWA, STEL, PEL, TLV)
 _EXPOSURE_RE = re.compile(
-    r"(TWA|STEL|PEL|TLV|REL).{0,40}?"
-    r"(\d+\.?\d*)\s*(mg/m[³3]|ppm|mg/m3)",
+    r"(TWA|STEL|PEL|TLV|REL).{0,40}?" r"(\d+\.?\d*)\s*(mg/m[³3]|ppm|mg/m3)",
     re.IGNORECASE,
 )
 
@@ -149,15 +149,13 @@ _PPE_RE = re.compile(
 
 # Flash point: "Flash point: 4 °C"
 _FLASH_POINT_RE = re.compile(
-    r"(?:flash\s*point).{0,30}?"
-    r"(\d+\.?\d*)\s*°?\s*([CF])",
+    r"(?:flash\s*point).{0,30}?" r"(\d+\.?\d*)\s*°?\s*([CF])",
     re.IGNORECASE,
 )
 
 # Boiling point: "Boiling point: 111 °C"
 _BOILING_POINT_RE = re.compile(
-    r"(?:boiling\s*point).{0,30}?"
-    r"(\d+\.?\d*)\s*°?\s*([CF])",
+    r"(?:boiling\s*point).{0,30}?" r"(\d+\.?\d*)\s*°?\s*([CF])",
     re.IGNORECASE,
 )
 
@@ -173,6 +171,7 @@ _INCOMPATIBILITY_RE = re.compile(
 # ---------------------------------------------------------------------------
 # Extraction functions — one per claim type
 # ---------------------------------------------------------------------------
+
 
 def _make_result(
     chemical: str,
@@ -225,30 +224,34 @@ def extract_storage_temp(
     for match in _regex_findall_safe(_STORAGE_TEMP_MAX_RE, text):
         value = match.group(1)
         unit = f"°{match.group(2).upper()}"
-        results.append(_make_result(
-            chemical=chemical,
-            claim_type=ClaimType.STORAGE_TEMP_MAX,
-            value=value,
-            unit=unit,
-            section_number=section_number,
-            original_text_span=match.group(0),
-            confidence=0.90,
-            **kwargs,
-        ))
+        results.append(
+            _make_result(
+                chemical=chemical,
+                claim_type=ClaimType.STORAGE_TEMP_MAX,
+                value=value,
+                unit=unit,
+                section_number=section_number,
+                original_text_span=match.group(0),
+                confidence=0.90,
+                **kwargs,
+            )
+        )
 
     for match in _regex_findall_safe(_STORAGE_TEMP_MIN_RE, text):
         value = match.group(1)
         unit = f"°{match.group(2).upper()}"
-        results.append(_make_result(
-            chemical=chemical,
-            claim_type=ClaimType.STORAGE_TEMP_MIN,
-            value=value,
-            unit=unit,
-            section_number=section_number,
-            original_text_span=match.group(0),
-            confidence=0.88,
-            **kwargs,
-        ))
+        results.append(
+            _make_result(
+                chemical=chemical,
+                claim_type=ClaimType.STORAGE_TEMP_MIN,
+                value=value,
+                unit=unit,
+                section_number=section_number,
+                original_text_span=match.group(0),
+                confidence=0.88,
+                **kwargs,
+            )
+        )
 
     return results
 
@@ -260,16 +263,18 @@ def extract_humidity(
     results: list[ExtractionResult] = []
 
     for match in _regex_findall_safe(_HUMIDITY_RE, text):
-        results.append(_make_result(
-            chemical=chemical,
-            claim_type=ClaimType.STORAGE_HUMIDITY_MAX,
-            value=match.group(1),
-            unit="%",
-            section_number=section_number,
-            original_text_span=match.group(0),
-            confidence=0.85,
-            **kwargs,
-        ))
+        results.append(
+            _make_result(
+                chemical=chemical,
+                claim_type=ClaimType.STORAGE_HUMIDITY_MAX,
+                value=match.group(1),
+                unit="%",
+                section_number=section_number,
+                original_text_span=match.group(0),
+                confidence=0.85,
+                **kwargs,
+            )
+        )
 
     return results
 
@@ -285,16 +290,18 @@ def extract_cas_numbers(
         cas = match.group(1)
         if cas not in seen:
             seen.add(cas)
-            results.append(_make_result(
-                chemical=chemical,
-                claim_type=ClaimType.CAS_NUMBER,
-                value=cas,
-                unit="",
-                section_number=section_number,
-                original_text_span=match.group(0),
-                confidence=0.95,
-                **kwargs,
-            ))
+            results.append(
+                _make_result(
+                    chemical=chemical,
+                    claim_type=ClaimType.CAS_NUMBER,
+                    value=cas,
+                    unit="",
+                    section_number=section_number,
+                    original_text_span=match.group(0),
+                    confidence=0.95,
+                    **kwargs,
+                )
+            )
 
     return results
 
@@ -310,16 +317,18 @@ def extract_h_codes(
         code = match.group(1).upper()
         if code not in seen:
             seen.add(code)
-            results.append(_make_result(
-                chemical=chemical,
-                claim_type=ClaimType.H_CODE,
-                value=code,
-                unit="",
-                section_number=section_number,
-                original_text_span=match.group(0),
-                confidence=0.95,
-                **kwargs,
-            ))
+            results.append(
+                _make_result(
+                    chemical=chemical,
+                    claim_type=ClaimType.H_CODE,
+                    value=code,
+                    unit="",
+                    section_number=section_number,
+                    original_text_span=match.group(0),
+                    confidence=0.95,
+                    **kwargs,
+                )
+            )
 
     return results
 
@@ -335,16 +344,18 @@ def extract_p_codes(
         code = match.group(1).upper()
         if code not in seen:
             seen.add(code)
-            results.append(_make_result(
-                chemical=chemical,
-                claim_type=ClaimType.P_CODE,
-                value=code,
-                unit="",
-                section_number=section_number,
-                original_text_span=match.group(0),
-                confidence=0.95,
-                **kwargs,
-            ))
+            results.append(
+                _make_result(
+                    chemical=chemical,
+                    claim_type=ClaimType.P_CODE,
+                    value=code,
+                    unit="",
+                    section_number=section_number,
+                    original_text_span=match.group(0),
+                    confidence=0.95,
+                    **kwargs,
+                )
+            )
 
     return results
 
@@ -358,19 +369,20 @@ def extract_exposure_limits(
     for match in _regex_findall_safe(_EXPOSURE_RE, text):
         limit_type = match.group(1).upper()
         claim_type = (
-            ClaimType.EXPOSURE_STEL if limit_type == "STEL"
-            else ClaimType.EXPOSURE_TWA
+            ClaimType.EXPOSURE_STEL if limit_type == "STEL" else ClaimType.EXPOSURE_TWA
         )
-        results.append(_make_result(
-            chemical=chemical,
-            claim_type=claim_type,
-            value=match.group(2),
-            unit=match.group(3),
-            section_number=section_number,
-            original_text_span=match.group(0),
-            confidence=0.88,
-            **kwargs,
-        ))
+        results.append(
+            _make_result(
+                chemical=chemical,
+                claim_type=claim_type,
+                value=match.group(2),
+                unit=match.group(3),
+                section_number=section_number,
+                original_text_span=match.group(0),
+                confidence=0.88,
+                **kwargs,
+            )
+        )
 
     return results
 
@@ -383,16 +395,18 @@ def extract_ppe(
 
     for match in _regex_findall_safe(_PPE_RE, text):
         ppe_item = match.group(1).strip().lower()
-        results.append(_make_result(
-            chemical=chemical,
-            claim_type=ClaimType.PPE_REQUIREMENT,
-            value=ppe_item,
-            unit="",
-            section_number=section_number,
-            original_text_span=match.group(0),
-            confidence=0.82,
-            **kwargs,
-        ))
+        results.append(
+            _make_result(
+                chemical=chemical,
+                claim_type=ClaimType.PPE_REQUIREMENT,
+                value=ppe_item,
+                unit="",
+                section_number=section_number,
+                original_text_span=match.group(0),
+                confidence=0.82,
+                **kwargs,
+            )
+        )
 
     return results
 
@@ -404,16 +418,18 @@ def extract_flash_point(
     results: list[ExtractionResult] = []
 
     for match in _regex_findall_safe(_FLASH_POINT_RE, text):
-        results.append(_make_result(
-            chemical=chemical,
-            claim_type=ClaimType.FLASH_POINT,
-            value=match.group(1),
-            unit=f"°{match.group(2).upper()}",
-            section_number=section_number,
-            original_text_span=match.group(0),
-            confidence=0.90,
-            **kwargs,
-        ))
+        results.append(
+            _make_result(
+                chemical=chemical,
+                claim_type=ClaimType.FLASH_POINT,
+                value=match.group(1),
+                unit=f"°{match.group(2).upper()}",
+                section_number=section_number,
+                original_text_span=match.group(0),
+                confidence=0.90,
+                **kwargs,
+            )
+        )
 
     return results
 
@@ -425,16 +441,18 @@ def extract_boiling_point(
     results: list[ExtractionResult] = []
 
     for match in _regex_findall_safe(_BOILING_POINT_RE, text):
-        results.append(_make_result(
-            chemical=chemical,
-            claim_type=ClaimType.BOILING_POINT,
-            value=match.group(1),
-            unit=f"°{match.group(2).upper()}",
-            section_number=section_number,
-            original_text_span=match.group(0),
-            confidence=0.90,
-            **kwargs,
-        ))
+        results.append(
+            _make_result(
+                chemical=chemical,
+                claim_type=ClaimType.BOILING_POINT,
+                value=match.group(1),
+                unit=f"°{match.group(2).upper()}",
+                section_number=section_number,
+                original_text_span=match.group(0),
+                confidence=0.90,
+                **kwargs,
+            )
+        )
 
     return results
 
@@ -448,16 +466,18 @@ def extract_incompatibilities(
     for match in _regex_findall_safe(_INCOMPATIBILITY_RE, text):
         value = match.group(1).strip()
         if len(value) > 4:  # filter noise
-            results.append(_make_result(
-                chemical=chemical,
-                claim_type=ClaimType.INCOMPATIBILITY,
-                value=value,
-                unit="",
-                section_number=section_number,
-                original_text_span=match.group(0),
-                confidence=0.80,
-                **kwargs,
-            ))
+            results.append(
+                _make_result(
+                    chemical=chemical,
+                    claim_type=ClaimType.INCOMPATIBILITY,
+                    value=value,
+                    unit="",
+                    section_number=section_number,
+                    original_text_span=match.group(0),
+                    confidence=0.80,
+                    **kwargs,
+                )
+            )
 
     return results
 

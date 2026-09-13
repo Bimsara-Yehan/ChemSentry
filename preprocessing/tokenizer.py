@@ -33,21 +33,21 @@ _PROTECTED_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # Concentration ranges:  1,2-dichloroethane, 2,4,6-trinitrotoluene
     ("CHEM_PREFIX", re.compile(r"\b\d(?:,\d+)*-[A-Za-z][A-Za-z\-]*[a-z]\b")),
     # Numeric ranges with units:  25–30 °C, 15-20 mg/m³
-    ("RANGE_UNIT", re.compile(
-        r"\b\d+\.?\d*\s*[–\-]\s*\d+\.?\d*\s*(?:°[CF]|ppm|mg/m[³3]|%)\b"
-    )),
+    (
+        "RANGE_UNIT",
+        re.compile(r"\b\d+\.?\d*\s*[–\-]\s*\d+\.?\d*\s*(?:°[CF]|ppm|mg/m[³3]|%)\b"),
+    ),
     # Standalone values with units:  ≤25 °C, >100 °F, 50 ppm
-    ("VALUE_UNIT", re.compile(
-        r"[<>≤≥]?\s*\d+\.?\d*\s*°[CF]"
-    )),
+    ("VALUE_UNIT", re.compile(r"[<>≤≥]?\s*\d+\.?\d*\s*°[CF]")),
     # H-codes and P-codes:  H301, H301+H311, P280+P310+P321
-    ("HP_CODE", re.compile(
-        r"\b[HP]\d{3}[A-Za-z]?(?:\s*\+\s*[HP]\d{3}[A-Za-z]?)*\b"
-    )),
+    ("HP_CODE", re.compile(r"\b[HP]\d{3}[A-Za-z]?(?:\s*\+\s*[HP]\d{3}[A-Za-z]?)*\b")),
     # Chemical formulas:  H2O, NaOH, H2SO4, Ca(OH)2
-    ("FORMULA", re.compile(
-        r"\b[A-Z][a-z]?(?:\d+)?(?:\([A-Z][a-z]?\w*\)\d*)?(?:[A-Z][a-z]?\d*)*\b"
-    )),
+    (
+        "FORMULA",
+        re.compile(
+            r"\b[A-Z][a-z]?(?:\d+)?(?:\([A-Z][a-z]?\w*\)\d*)?(?:[A-Z][a-z]?\d*)*\b"
+        ),
+    ),
 ]
 
 # Placeholder template — must not collide with real text.

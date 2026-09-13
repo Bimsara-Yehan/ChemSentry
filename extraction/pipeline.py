@@ -68,16 +68,16 @@ def extract_document(
         for result in section_results:
             if result.unit and result.value.replace(".", "").isdigit():
                 try:
-                    normalised = normalise_value(
-                        float(result.value), result.unit
-                    )
+                    normalised = normalise_value(float(result.value), result.unit)
                     # Update the result with normalised value if conversion
                     # was applied, but KEEP the original in the text span.
                     if normalised.conversion_applied != "no conversion applied":
-                        result = result.model_copy(update={
-                            "value": str(normalised.normalised_value),
-                            "unit": normalised.normalised_unit,
-                        })
+                        result = result.model_copy(
+                            update={
+                                "value": str(normalised.normalised_value),
+                                "unit": normalised.normalised_unit,
+                            }
+                        )
                 except (ValueError, TypeError):
                     pass  # Non-numeric value — skip normalisation.
 

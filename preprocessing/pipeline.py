@@ -16,9 +16,9 @@ Usage:
 
 from __future__ import annotations
 
-from preprocessing.tokenizer import tokenize
-from preprocessing.stopwords import remove_stopwords
 from preprocessing.stemmer import selective_stem
+from preprocessing.stopwords import remove_stopwords
+from preprocessing.tokenizer import tokenize
 
 
 def preprocess(text: str) -> list[str]:

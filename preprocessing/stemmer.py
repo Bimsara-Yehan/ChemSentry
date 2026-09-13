@@ -52,8 +52,18 @@ _stemmer = PorterStemmer()
 
 # Chemical suffixes that must NOT be stemmed — these distinguish substances.
 _CHEMICAL_SUFFIXES: tuple[str, ...] = (
-    "ate", "ide", "ite", "ol", "one", "ene", "ane",
-    "ine", "yl", "oxy", "ase", "ose",
+    "ate",
+    "ide",
+    "ite",
+    "ol",
+    "one",
+    "ene",
+    "ane",
+    "ine",
+    "yl",
+    "oxy",
+    "ase",
+    "ose",
 )
 
 # Regex for tokens containing digits — likely chemical identifiers, not English.
