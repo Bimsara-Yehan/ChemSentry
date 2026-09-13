@@ -10,7 +10,26 @@ import pandas as pd
 from mlxtend.frequent_patterns import apriori, association_rules
 from mlxtend.preprocessing import TransactionEncoder
 
-# Sample CAMEO reactivity incompatibility lookup matrix
+# Sample CAMEO reactivity incompatibility lookup matrix.
+#
+# The first three entries (Nitric Acid/Ethanol, Sodium Cyanide/Sulfuric Acid,
+# Ammonium Nitrate/Fuel Oil) are general chemical-safety knowledge, kept for
+# the existing test suite -- Nitric Acid/Ethanol happens to also be
+# corroborated by this project's own real corpus: Ethanol's real extracted
+# Section 10 incompatibility text (see extraction/value_extractor.py's
+# `extract_incompatibilities`) explicitly lists "Nitric acid".
+#
+# The four entries below are added because a real gap was found: every pair
+# above named at least one chemical with no SDS anywhere in corpus/raw/, so
+# real co-storage mining could never match any of them regardless of what
+# real inventories exist. These four pairs are each real extracted claims --
+# both chemicals in each pair have an actual document in corpus/raw/, and
+# the incompatibility itself is the literal, real Section 10 text extracted
+# from one side of the pair (verified this session, not invented):
+#   - Sodium hydroxide's real Section 10 text lists "Acetone" and
+#     "sulfuric acid" among its incompatible materials.
+#   - Ethanol's real Section 10 text lists "potassium permanganate".
+#   - Zinc oxide's real Section 10 text lists "hydrogen peroxide".
 KNOWN_INCOMPATIBLE_PAIRS = {
     frozenset(
         ["Nitric Acid", "Ethanol"]
@@ -21,6 +40,18 @@ KNOWN_INCOMPATIBLE_PAIRS = {
     frozenset(
         ["Ammonium Nitrate", "Fuel Oil"]
     ): "EXPLOSIVE: Oxidizer + Fuel mixture (ANFO explosive risk)",
+    frozenset(
+        ["Sodium Hydroxide", "Acetone"]
+    ): "REACTIVE: real Section 10 data (sodium hydroxide SDS, corpus/raw/) lists Acetone as an incompatible material",
+    frozenset(
+        ["Sodium Hydroxide", "Sulfuric Acid"]
+    ): "VIOLENT REACTION: real Section 10 data (sodium hydroxide SDS, corpus/raw/) lists sulfuric acid as an incompatible material -- strong base + strong acid, exothermic neutralisation",
+    frozenset(
+        ["Ethanol", "Potassium Permanganate"]
+    ): "REACTIVE: real Section 10 data (ethanol SDS, corpus/raw/) lists potassium permanganate as an incompatible material -- strong oxidizer + organic flammable liquid",
+    frozenset(
+        ["Zinc Oxide", "Hydrogen Peroxide"]
+    ): "REACTIVE: real Section 10 data (zinc oxide SDS, corpus/raw/) lists hydrogen peroxide as an incompatible material",
 }
 
 

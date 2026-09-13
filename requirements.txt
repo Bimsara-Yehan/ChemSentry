@@ -1,41 +1,50 @@
+# Pinned to exact versions verified working together (all 124 tests pass,
+# black/ruff clean) as of 2026-09-13 -- previously unpinned, which is what
+# caused a real CI failure this session: local and CI resolved different
+# FastAPI/Starlette versions, and on_event("startup") behaved differently
+# between them, so init_db() silently never ran in CI. See docs/adr/ for the
+# fix (calling init_db() at import time rather than relying solely on the
+# startup event) -- pinning here prevents the *next* silent version drift
+# from reintroducing a similar surprise.
+
 # API layer
-fastapi
-uvicorn[standard]
-pydantic
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pydantic==2.13.4
 
 # Auth & security
-pyjwt
-bcrypt
+pyjwt==2.13.0
+bcrypt==5.0.0
 
 # Retrieval & NLP (Labs 02-06)
-nltk
-scikit-learn
+nltk==3.10.3
+scikit-learn==1.9.0
 
 # Classification (Lab 08)
-pandas
+pandas==3.0.5
 
 # Association rules (Lab 09)
-mlxtend
+mlxtend==0.25.0
 
 # Crawling (Lecture 11)
-requests
-beautifulsoup4
+requests==2.34.2
+beautifulsoup4==4.15.0
 
 # PDF text extraction (M1 -- local SDS corpus)
-pdfplumber
+pdfplumber==0.11.10
 
 # MQTT (Agent C)
-paho-mqtt
+paho-mqtt==2.1.0
 
 # Database
-sqlalchemy
-psycopg2-binary          # only needed if using PostgreSQL rather than SQLite
+sqlalchemy==2.0.52
+psycopg2-binary==2.9.12  # only needed if using PostgreSQL rather than SQLite
 
 # LLM integration
-mistralai
+mistralai==2.9.3
 
 # Testing & quality
-pytest
-pytest-cov
-black
-ruff
+pytest==9.1.1
+pytest-cov==7.1.0
+black==26.5.1
+ruff==0.16.3
