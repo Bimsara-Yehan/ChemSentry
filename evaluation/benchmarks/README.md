@@ -30,6 +30,38 @@ ground truth — see `evaluation/run_layer2_eval.py`'s module docstring.
 
 Phrase and proximity rows test document-content retrieval, not name resolution, so their
 `expected_chemicals` is intentionally blank — there's no real SDS text yet to hand-assess
-relevance against. Once M1's corpus/extraction/indexing work lands, add a
-`relevant_doc_ids` column and fill in hand-assessed relevance judgements for all 50
-queries per Layer 1 of the evaluation plan.
+relevance against.
+
+## `layer1_query_set.csv`
+
+M1's corpus/extraction/indexing work has now landed, so Layer 1 (retrieval quality) is
+built — but as a **separate** query set from the one above, not an extra column on it.
+Reason: `query_set.csv`'s `expected_chemicals` were hand-assessed against the placeholder
+vocabulary in `agents/agent_a_retrieval/vocabulary.py` (18 chemicals invented for testing
+before any real corpus existed). The real corpus in `corpus/raw/` only covers 12 of those
+— several placeholder chemicals (toluene, ammonia, xylene, ferric chloride, sodium
+chlorate) have no document at all. Reusing `query_set.csv`'s rows against real documents
+would score correctly-empty results (nothing to find) as retrieval failures.
+
+`layer1_query_set.csv` is a smaller (26-query), independently-verified benchmark against
+the real 12-chemical corpus: `relevant_doc_ids` (not `expected_chemicals`) is the ground
+truth column, built by direct text search against the raw extracted document text — see
+each row's `notes` and `evaluation/run_layer1_eval.py`'s module docstring for the method.
+Run via `python -m evaluation.run_layer1_eval`; results land in
+`evaluation/results/layer1_retrieval_quality.md`. This script needs `corpus/raw/`
+populated locally (gitignored, not present in CI) — it's a manual evaluation run, not a
+CI-gated test, for that reason.
+
+## `layer5_scenarios.csv`
+
+End-to-end state-accuracy scenarios (chemical, metric, sensor reading, expected
+SAFE/WARNING/UNKNOWN), run through the real `CorpusRetriever` → `DeterministicSafetyEvaluator`
+path — not a mock threshold table. Expected states were derived by hand from real
+threshold values verified directly against the corpus (see
+`evaluation/run_layer5_eval.py`'s module docstring), the same discipline as
+`layer1_query_set.csv`. One additional scenario is synthetic (a genuine authority-tied
+conflict) since this corpus's one real multi-supplier case (sulfuric acid) happens to
+have both suppliers agree — clearly labelled as such in the results, not presented as
+corpus-derived. Run via `python -m evaluation.run_layer5_eval`; results land in
+`evaluation/results/layer5_state_accuracy.md`. Same `corpus/raw/` dependency as Layer 1 —
+manual/local run, not CI-gated.

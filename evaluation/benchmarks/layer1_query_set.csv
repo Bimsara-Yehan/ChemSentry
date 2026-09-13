@@ -1,0 +1,27 @@
+query_id,query_text,category,relevant_doc_ids,notes
+L001,acetone,exact,179124,exact chemical name match
+L002,sulfuric acid,exact,258105;258105 (1),exact match -- corpus holds two supplier documents for this chemical
+L003,hydrochloric acid,exact,h1758,exact chemical name match
+L004,sodium hydroxide,exact,221465,exact chemical name match
+L005,potassium permanganate,exact,238511,exact chemical name match
+L006,acetne,misspelled,179124,1-char deletion of L001
+L007,sulfric acid,misspelled,258105;258105 (1),1-char deletion of L002 -- same real-world case tested live against the API earlier
+L008,hydrocloric acid,misspelled,h1758,1-char deletion of L003
+L009,sodum hydroxide,misspelled,221465,1-char deletion of L004
+L010,potasium permanganate,misspelled,238511,1-char deletion of L005
+L011,*acid,wildcard,c0759;h1758;258105;258105 (1),suffix wildcard -- verified against real vocabulary via resolve_wildcard()
+L012,sodium *,wildcard,221465;s5761,prefix wildcard on shared first token
+L013,*oxide,wildcard,216763;221465;96479,"suffix wildcard -- matches ""peroxide"" (216763) and ""hydroxide"" (221465) via their own token, not just ""zinc oxide"""
+L014,per*,wildcard,216763;238511,prefix wildcard
+L015,*ane,wildcard,,suffix wildcard with no match in this corpus -- tests empty-result handling (verified: no real chemical name here ends in ""ane"")
+L016,corrosive,phrase,216763;221465;238511;258105;258105 (1);h1758,"verified by direct text search across all 13 raw documents, not the indexing pipeline's own output"
+L017,flammable liquid,phrase,179124;51976;i9516,verified by direct text search
+L018,oxidizer,phrase,216763;238511,verified by direct text search
+L019,harmful if swallowed,phrase,216763;238511,verified by direct text search
+L020,handling and storage,phrase,179124;216763;221465;238511;258105;258105 (1);51976;96479;c0759;h1758;i9516;s5761;u5128,"standard GHS section-7 header -- appears in all 13 documents; included deliberately to show generic template phrases have no discriminative retrieval value in this corpus, unlike L016-L019"
+L021,hazard identification,phrase,179124;216763;238511;51976;96479,verified by direct text search -- only 5/13 documents use this exact header wording
+L022,corrosive /5 metals,proximity,221465;258105;258105 (1);h1758,"verified with an independent word-distance check on raw text (not the system's own PositionalIndex), window=5"
+L023,storage /3 temperature,proximity,179124;238511;51976,verified independently -- window=3
+L024,flammable /2 liquid,proximity,179124;51976;i9516,verified independently -- window=2
+L025,nitrile /5 gloves,proximity,,"verified independently: these two words never co-occur within 5 tokens in this corpus (real text reads ""Material : Nitrile rubber"", not ""nitrile gloves"") -- tests correct empty-result handling on a real negative case"
+L026,acid /10 reducing,proximity,179124;238511,verified independently -- window=10

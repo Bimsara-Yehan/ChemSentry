@@ -96,22 +96,74 @@ def _regex_findall_safe(
 
 
 # ---------------------------------------------------------------------------
+# Locale-aware numeric parsing
+# ---------------------------------------------------------------------------
+#
+# Confirmed necessary by real-corpus validation, not a theoretical concern:
+# every document in corpus/raw/ (all from Sigma-Aldrich Chemie GmbH) uses
+# European number formatting -- "," as the decimal separator, "." as a
+# thousands separator -- and every numeric regex below originally assumed
+# plain/US formatting (a bare "." decimal point, no sign). That silently
+# produced wrong values, not just missed ones:
+#   - Sodium hydroxide boiling point: real text "1.390 \xb0C" (meaning 1390,
+#     EU thousands grouping) extracted as 1.39 -- 1000x too small.
+#   - Acetone flash point: real text "-17,0 \xb0C" extracted as 0.0 -- the
+#     regex's old `\d+\.?\d*` group has no leading-minus support and no
+#     comma support, so it skipped the entire real number and landed on a
+#     stray trailing digit instead. A falsely reassuring wrong number on a
+#     safety-relevant property is the exact failure mode this project's
+#     central principle exists to prevent, and it happened silently.
+#
+# _NUM captures the full number (optional sign, one optional decimal/
+# thousands group in either convention); _normalise_numeric_string then
+# decides which convention applies and returns a canonical (US-style)
+# numeric string for ExtractionResult.value, so every downstream consumer
+# (extraction/pipeline.py, agents/agent_a_retrieval/provenance_bridge.py)
+# gets a value plain float() parses correctly. original_text_span is never
+# touched by this -- it still shows the real source text verbatim.
+_NUM = r"-?\d+(?:[.,]\d+)?"
+
+
+def _normalise_numeric_string(raw: str) -> str:
+    """Convert a matched numeric string to a canonical, float()-parseable form.
+
+    Args:
+        raw: The numeric text exactly as matched (e.g. "-17,0", "1.390", "25").
+
+    Returns:
+        Canonical numeric string (e.g. "-17.0", "1390", "25").
+    """
+    text = raw.strip()
+    if "," in text:
+        # A comma is unambiguous under the confirmed EU convention: always
+        # the decimal separator. Strip any "." thousands separators first.
+        return text.replace(".", "").replace(",", ".")
+    if re.fullmatch(r"-?\d{1,3}\.\d{3}", text):
+        # No comma, but a period followed by exactly 3 digits and nothing
+        # else -- the classic EU thousands-separator shape ("1.390"), not a
+        # genuine 3-decimal-place value (physical properties in these
+        # documents are never reported to 3 decimal places).
+        return text.replace(".", "")
+    return text
+
+
+# ---------------------------------------------------------------------------
 # Extraction patterns — all use BOUNDED quantifiers
 # ---------------------------------------------------------------------------
 
 # Storage temperature maximum: "store below 25 °C", "keep under 30°C"
 _STORAGE_TEMP_MAX_RE = re.compile(
     r"(?:store|keep|storage).{0,60}?"
-    r"(?:below|under|not\s+(?:above|exceed)|max(?:imum)?|≤|<=)\s*"
-    r"(\d+\.?\d*)\s*°?\s*([CF])",
+    rf"(?:below|under|not\s+(?:above|exceed)|max(?:imum)?|≤|<=)\s*"
+    rf"({_NUM})\s*°?\s*([CF])",
     re.IGNORECASE,
 )
 
 # Storage temperature minimum: "store above 5 °C", "keep above freezing"
 _STORAGE_TEMP_MIN_RE = re.compile(
     r"(?:store|keep|storage).{0,60}?"
-    r"(?:above|over|min(?:imum)?|≥|>=)\s*"
-    r"(\d+\.?\d*)\s*°?\s*([CF])",
+    rf"(?:above|over|min(?:imum)?|≥|>=)\s*"
+    rf"({_NUM})\s*°?\s*([CF])",
     re.IGNORECASE,
 )
 
@@ -122,8 +174,8 @@ _STORAGE_TEMP_MIN_RE = re.compile(
 # against real SDS PDFs in corpus/raw/, not invented (see ADR pending).
 # Captures an optional range (min, max) or a single ceiling value.
 _STORAGE_TEMP_LABEL_RE = re.compile(
-    r"storage(?:\s+temperature)?\s*:\s*"
-    r"(-?\d+\.?\d*)\s*(?:[-–]\s*(-?\d+\.?\d*))?\s*°?\s*([CF])"
+    rf"storage(?:\s+temperature)?\s*:\s*"
+    rf"({_NUM})\s*(?:[-–]\s*({_NUM}))?\s*°?\s*([CF])"
     r"(?:\s*\n\s*temperature\b)?",
     re.IGNORECASE,
 )
@@ -132,7 +184,7 @@ _STORAGE_TEMP_LABEL_RE = re.compile(
 _HUMIDITY_RE = re.compile(
     r"(?:humidity|RH|relative\s+humidity).{0,40}?"
     r"(?:below|under|not\s+exceed|max|≤|<=)?\s*"
-    r"(\d+\.?\d*)\s*%",
+    rf"({_NUM})\s*%",
     re.IGNORECASE,
 )
 
@@ -152,7 +204,7 @@ _P_CODE_RE = re.compile(r"\b(P\d{3}(?:\s*\+\s*P\d{3})*)\b")
 
 # Exposure limits (TWA, STEL, PEL, TLV)
 _EXPOSURE_RE = re.compile(
-    r"(TWA|STEL|PEL|TLV|REL).{0,40}?" r"(\d+\.?\d*)\s*(mg/m[³3]|ppm|mg/m3)",
+    rf"(TWA|STEL|PEL|TLV|REL).{{0,40}}?" rf"({_NUM})\s*(mg/m[³3]|ppm|mg/m3)",
     re.IGNORECASE,
 )
 
@@ -175,15 +227,17 @@ _PPE_MATERIAL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Flash point: "Flash point: 4 °C"
+# Flash point: "Flash point: 4 °C" (real corpus: often negative, e.g. "-17,0 °C" --
+# see the module-level comment above _NUM for why the number group must
+# support a leading sign and a comma decimal)
 _FLASH_POINT_RE = re.compile(
-    r"(?:flash\s*point).{0,30}?" r"(\d+\.?\d*)\s*°?\s*([CF])",
+    rf"(?:flash\s*point).{{0,30}}?" rf"({_NUM})\s*°?\s*([CF])",
     re.IGNORECASE,
 )
 
 # Boiling point: "Boiling point: 111 °C"
 _BOILING_POINT_RE = re.compile(
-    r"(?:boiling\s*point).{0,30}?" r"(\d+\.?\d*)\s*°?\s*([CF])",
+    rf"(?:boiling\s*point).{{0,30}}?" rf"({_NUM})\s*°?\s*([CF])",
     re.IGNORECASE,
 )
 
@@ -281,7 +335,7 @@ def extract_storage_temp(
     results: list[ExtractionResult] = []
 
     for match in _regex_findall_safe(_STORAGE_TEMP_MAX_RE, text):
-        value = match.group(1)
+        value = _normalise_numeric_string(match.group(1))
         unit = f"°{match.group(2).upper()}"
         results.append(
             _make_result(
@@ -297,7 +351,7 @@ def extract_storage_temp(
         )
 
     for match in _regex_findall_safe(_STORAGE_TEMP_MIN_RE, text):
-        value = match.group(1)
+        value = _normalise_numeric_string(match.group(1))
         unit = f"°{match.group(2).upper()}"
         results.append(
             _make_result(
@@ -314,6 +368,8 @@ def extract_storage_temp(
 
     for match in _regex_findall_safe(_STORAGE_TEMP_LABEL_RE, text):
         low, high, unit_letter = match.group(1), match.group(2), match.group(3)
+        low = _normalise_numeric_string(low)
+        high = _normalise_numeric_string(high) if high is not None else None
         unit = f"°{unit_letter.upper()}"
 
         if high is not None:
@@ -373,7 +429,7 @@ def extract_humidity(
             _make_result(
                 chemical=chemical,
                 claim_type=ClaimType.STORAGE_HUMIDITY_MAX,
-                value=match.group(1),
+                value=_normalise_numeric_string(match.group(1)),
                 unit="%",
                 section_number=section_number,
                 original_text_span=match.group(0),
@@ -481,7 +537,7 @@ def extract_exposure_limits(
             _make_result(
                 chemical=chemical,
                 claim_type=claim_type,
-                value=match.group(2),
+                value=_normalise_numeric_string(match.group(2)),
                 unit=match.group(3),
                 section_number=section_number,
                 original_text_span=match.group(0),
@@ -549,7 +605,7 @@ def extract_flash_point(
             _make_result(
                 chemical=chemical,
                 claim_type=ClaimType.FLASH_POINT,
-                value=match.group(1),
+                value=_normalise_numeric_string(match.group(1)),
                 unit=f"°{match.group(2).upper()}",
                 section_number=section_number,
                 original_text_span=match.group(0),
@@ -572,7 +628,7 @@ def extract_boiling_point(
             _make_result(
                 chemical=chemical,
                 claim_type=ClaimType.BOILING_POINT,
-                value=match.group(1),
+                value=_normalise_numeric_string(match.group(1)),
                 unit=f"°{match.group(2).upper()}",
                 section_number=section_number,
                 original_text_span=match.group(0),

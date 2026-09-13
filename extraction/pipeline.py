@@ -66,7 +66,13 @@ def extract_document(
 
         # Step 3: Normalise units on numeric extractions.
         for result in section_results:
-            if result.unit and result.value.replace(".", "").isdigit():
+            # Bug found alongside the locale-aware numeric parsing fix in
+            # extraction/value_extractor.py: `.replace(".", "").isdigit()`
+            # rejects any negative value (a leading "-" is not a digit), so
+            # e.g. a real "-17.0" flash point would silently skip unit
+            # normalisation entirely. Parsing via float() and catching the
+            # failure is the actual check being attempted here.
+            if result.unit:
                 try:
                     normalised = normalise_value(float(result.value), result.unit)
                     # Update the result with normalised value if conversion
