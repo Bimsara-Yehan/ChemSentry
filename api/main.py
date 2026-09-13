@@ -22,7 +22,11 @@ from sqlalchemy.orm import Session
 
 # Import Agent A retrieval, Agent B & Safety State Machine components
 from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
-from agents.agent_c_environment.zone_inventory import seed_default_zone_inventory
+from agents.agent_c_environment.monitor import EnvironmentalMonitor, ZoneEvaluation
+from agents.agent_c_environment.zone_inventory import (
+    load_zone_inventory,
+    seed_default_zone_inventory,
+)
 from agents.protocols.schemas import (
     SafetyEvaluationRequest,
     SafetyEvaluationResult,
@@ -45,13 +49,16 @@ from api.database import (
 # populates it.)
 from api.db_models import AlertRecord, AuditLogRecord, next_alert_id
 from api.models import (
+    ChemicalCheckOut,
     HealthCheck,
     QueryRequest,
     QueryResponse,
+    SensorReading,
     TokenResponse,
     UserInfo,
     UserLogin,
     UserRole,
+    ZoneStatusResponse,
 )
 from api.security import (
     authenticate_user,
@@ -133,6 +140,88 @@ def _seed_zone_inventory() -> None:
 _seed_zone_inventory()
 
 
+def _load_zone_inventory() -> dict[str, list[str]]:
+    db = SessionLocal()
+    try:
+        return load_zone_inventory(db)
+    finally:
+        db.close()
+
+
+# Agent C (M4): the real EnvironmentalMonitor -- holds no chemical knowledge
+# of its own, only which chemicals are in which zone (see
+# agents/agent_c_environment/monitor.py's module docstring).
+zone_inventory = _load_zone_inventory()
+
+
+def _get_environmental_monitor() -> EnvironmentalMonitor:
+    """Construct the monitor fresh from the current module-level `retriever`
+    on every call, rather than capturing it once at import time.
+
+    Mirrors how every other route already reads the module-level `retriever`
+    global at call time, not at import time -- tests override `main.retriever`
+    with a small fixture corpus after this module has already been imported
+    (see tests/test_api/test_api_gateway.py); a `retriever` captured once in
+    a module-level `EnvironmentalMonitor` would never see that override.
+    Construction itself is cheap (no I/O, just storing references).
+    """
+    return EnvironmentalMonitor(retriever, evaluator, zone_inventory)
+
+
+# Ephemeral instrument-state caches, deliberately NOT persisted to the DB --
+# unlike AlertRecord/AuditLogRecord (audit-critical, append-only), "what did
+# the sensor last read" is not a decision that needs a durable record; only
+# the alerts an excursion produces are. Rebuilt from scratch on every
+# process restart via _seed_initial_zone_readings() below.
+_LATEST_ZONE_EVALUATIONS: dict[str, ZoneEvaluation] = {}
+_LAST_ALERT_TIMESTAMP: dict[str, datetime] = {}
+
+
+def _seed_initial_zone_readings() -> None:
+    """Give every inventoried zone one evaluated ambient reading at startup,
+    so GET /zones has real data (from the real retrieval + safety-evaluation
+    pipeline) to show immediately -- rather than requiring the simulator to
+    have already published something first."""
+    monitor = _get_environmental_monitor()
+    for zone_id in zone_inventory:
+        reading = SensorReading(
+            zone_id=zone_id,
+            temperature_celsius=20.0,
+            humidity_percent=45.0,
+            timestamp=datetime.now(timezone.utc),
+            device_id="startup-default",
+        )
+        _LATEST_ZONE_EVALUATIONS[zone_id] = monitor.handle_reading(reading)
+
+
+_seed_initial_zone_readings()
+
+
+def _zone_status_response(zone_id: str) -> ZoneStatusResponse:
+    """Build the API-facing view of a zone from its latest evaluation."""
+    evaluation = _LATEST_ZONE_EVALUATIONS[zone_id]
+    return ZoneStatusResponse(
+        zone_id=zone_id,
+        last_reading=evaluation.reading,
+        is_excursion=evaluation.is_excursion,
+        safety_state=evaluation.aggregated_state.value,
+        last_alert_timestamp=_LAST_ALERT_TIMESTAMP.get(zone_id),
+        chemicals=zone_inventory.get(zone_id, []),
+        checks=[
+            ChemicalCheckOut(
+                chemical_name=c.chemical_name,
+                metric_name=c.metric_name,
+                state=c.state.value,
+                current_value=c.current_value,
+                threshold_value=c.threshold_value,
+                reasoning=c.reasoning,
+                citation=c.provenance.citation if c.provenance else None,
+            )
+            for c in evaluation.checks
+        ],
+    )
+
+
 # ============================================================================
 # Lifecycle Events
 # ============================================================================
@@ -140,10 +229,16 @@ _seed_zone_inventory()
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database on app startup."""
+    """Initialize database on app startup.
+
+    Plain ASCII only in this log line -- a real `uvicorn api.main:app` run
+    (unlike TestClient, which never fires this event at all) writes it to
+    Windows' default cp1252 console encoding, which can't encode an emoji
+    and crashes app startup outright.
+    """
     init_db()
     _seed_zone_inventory()
-    print("✅ Database initialized")
+    print("Database initialized")
 
 
 # ============================================================================
@@ -324,6 +419,105 @@ async def query_chemical(
             "final_safety_state": "UNKNOWN",
         },
     )
+
+
+# ============================================================================
+# Agent C -- Environmental Monitoring Routes
+# ============================================================================
+
+
+@app.get("/zones")
+async def list_zones(user: UserInfo = Depends(get_current_user)):
+    """Current state of every monitored zone (Live Environment dashboard).
+
+    Read-only -- available to VIEWER role, same as /alerts.
+    """
+    return {"zones": [_zone_status_response(zone_id) for zone_id in zone_inventory]}
+
+
+@app.get("/zones/{zone_id}", response_model=ZoneStatusResponse)
+async def get_zone(zone_id: str, user: UserInfo = Depends(get_current_user)):
+    """Current state of a single zone."""
+    if zone_id not in zone_inventory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Zone '{zone_id}' not found"
+        )
+    return _zone_status_response(zone_id)
+
+
+@app.post("/zones/{zone_id}/telemetry", response_model=ZoneStatusResponse)
+async def submit_zone_telemetry(
+    zone_id: str,
+    reading: SensorReading,
+    user: UserInfo = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Feed one sensor reading through Agent C for a zone.
+
+    Stands in for what the MQTT subscriber (agents/agent_c_environment/
+    mqtt_subscriber.py) does for a real/simulated broker message -- exposed
+    over HTTP too so the UI's telemetry simulator controls and any future
+    hardware bridge that prefers HTTP over MQTT have a real endpoint to call.
+
+    Requires: ANALYST or ADMIN role (same as /safety/evaluate -- a VIEWER
+    must not be able to inject sensor data).
+    """
+    if user.role == UserRole.VIEWER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Analyst or Admin role required to submit telemetry",
+        )
+    if zone_id not in zone_inventory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Zone '{zone_id}' not found"
+        )
+    if reading.zone_id != zone_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Path zone_id '{zone_id}' does not match reading.zone_id '{reading.zone_id}'",
+        )
+
+    evaluation = _get_environmental_monitor().handle_reading(reading)
+    _LATEST_ZONE_EVALUATIONS[zone_id] = evaluation
+
+    if evaluation.is_excursion:
+        _LAST_ALERT_TIMESTAMP[zone_id] = datetime.now(timezone.utc)
+        # One alert per chemical genuinely in WARNING, not one per zone --
+        # mirrors /safety/evaluate's per-evaluation persistence, just fanned
+        # out across every chemical Agent C checked for this reading.
+        for check in evaluation.checks:
+            if check.state != SafetyState.WARNING:
+                continue
+            alert_id = next_alert_id(db)
+            db.add(
+                AlertRecord(
+                    alert_id=alert_id,
+                    zone_id=zone_id,
+                    chemical_name=check.chemical_name,
+                    current_value=check.current_value,
+                    unit="C",
+                    threshold_value=check.threshold_value,
+                    reasoning=check.reasoning,
+                    status="pending_review",
+                    created_by=user.username,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+            db.add(
+                AuditLogRecord(
+                    action="alert_created",
+                    user_id=user.username,
+                    resource=alert_id,
+                    details={
+                        "zone_id": zone_id,
+                        "chemical_name": check.chemical_name,
+                        "metric_name": check.metric_name,
+                    },
+                )
+            )
+        db.commit()
+
+    return _zone_status_response(zone_id)
 
 
 @app.get("/alerts")

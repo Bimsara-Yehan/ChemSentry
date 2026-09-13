@@ -70,6 +70,35 @@ class ZoneState(BaseModel):
     last_alert_timestamp: Optional[datetime] = None
 
 
+class ChemicalCheckOut(BaseModel):
+    """One (chemical, metric) evaluation behind a zone's aggregated state.
+
+    Agent C's `EnvironmentalMonitor` (agents/agent_c_environment/monitor.py)
+    checks every chemical in a zone against every monitored metric; `ZoneState`
+    alone only carries the worst-case aggregate. The Live Environment UI needs
+    the underlying per-chemical reasoning and citation too -- "cited back to
+    the user" applies here exactly as it does to a /query result.
+    """
+
+    chemical_name: str
+    metric_name: str
+    state: str  # "SAFE", "WARNING", "UNKNOWN"
+    current_value: float
+    threshold_value: Optional[float] = None
+    reasoning: str
+    citation: Optional[str] = None
+
+
+class ZoneStatusResponse(ZoneState):
+    """`ZoneState` plus the zone's known chemical inventory and the
+    per-chemical evidence behind its aggregated `safety_state` -- what
+    `GET /zones` and `POST /zones/{zone_id}/telemetry` actually return.
+    """
+
+    chemicals: list[str]
+    checks: list[ChemicalCheckOut]
+
+
 # ============================================================================
 # Retrieval & Evidence (from Agent A + Agent B)
 # ============================================================================
