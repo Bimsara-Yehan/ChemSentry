@@ -8,7 +8,10 @@ source documents.
 """
 
 from extraction.value_extractor import (
+    _normalise_numeric_string,
+    extract_boiling_point,
     extract_cas_numbers,
+    extract_flash_point,
     extract_incompatibilities,
     extract_ppe,
     extract_storage_temp,
@@ -143,3 +146,61 @@ def test_incompatibility_still_matches_sentence_style() -> None:
 
     assert len(results) == 1
     assert "oxidizers" in results[0].value
+
+
+# ---------------------------------------------------------------------------
+# Locale-aware numeric parsing -- European (comma-decimal, period-thousands)
+# number formats, confirmed used throughout the real corpus (every document
+# is from Sigma-Aldrich Chemie GmbH). Found while building Layer 5 evaluation
+# ground truth: sodium hydroxide's real boiling point ("1.390 \xb0C", meaning
+# 1390) was extracted as 1.39, and acetone's real flash point
+# ("-17,0 \xb0C") was extracted as 0.0 -- a wrong, falsely reassuring value
+# on a safety-relevant property, silently produced.
+# ---------------------------------------------------------------------------
+
+
+def test_normalise_numeric_string_handles_comma_decimal() -> None:
+    assert _normalise_numeric_string("-17,0") == "-17.0"
+    assert _normalise_numeric_string("20,0") == "20.0"
+
+
+def test_normalise_numeric_string_handles_eu_thousands_separator() -> None:
+    assert _normalise_numeric_string("1.390") == "1390"
+
+
+def test_normalise_numeric_string_leaves_plain_values_unchanged() -> None:
+    assert _normalise_numeric_string("25") == "25"
+    assert _normalise_numeric_string("25.5") == "25.5"
+    assert _normalise_numeric_string("-5") == "-5"
+
+
+def test_flash_point_extracts_real_negative_comma_decimal_value() -> None:
+    """The exact real acetone case that was silently wrong: extracted as
+    0.0 before this fix, must now be -17.0."""
+    text = "Flash point : -17,0 \xb0C\nMethod: closed cup"
+    results = extract_flash_point(text, chemical="Acetone")
+
+    assert len(results) == 1
+    assert results[0].value == "-17.0"
+    assert float(results[0].value) == -17.0
+
+
+def test_boiling_point_extracts_real_thousands_separator_value() -> None:
+    """The exact real sodium hydroxide case: extracted as 1.39 before this
+    fix (1000x too small), must now be 1390."""
+    text = "Initial boiling point 1.390 \xb0C at 1.013 hPa\nand boiling range"
+    results = extract_boiling_point(text, chemical="Sodium hydroxide")
+
+    assert len(results) == 1
+    assert results[0].value == "1390"
+    assert float(results[0].value) == 1390.0
+
+
+def test_boiling_point_still_extracts_plain_values_correctly() -> None:
+    """Regression guard: the fix must not break the common case of a plain
+    value with no locale ambiguity at all."""
+    text = "Boiling point: 56 \xb0C"
+    results = extract_boiling_point(text, chemical="Acetone")
+
+    assert len(results) == 1
+    assert results[0].value == "56"
