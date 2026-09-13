@@ -99,3 +99,22 @@ def next_alert_id(db) -> str:
     """
     count = db.query(AlertRecord).count()
     return f"ALT_{count + 1:04d}"
+
+
+class ZoneInventoryRecord(Base):
+    """Which chemicals are stored in which zone (Agent C, M4).
+
+    Plan §16: "Inventory is database-backed and simulated ... Container
+    tracking is not our research contribution." This is deliberately that --
+    a flat zone-to-chemical mapping, not real-time RFID/container tracking.
+    Agent C (agents/agent_c_environment/) reads this to know which real
+    chemicals' thresholds to check whenever a zone's sensor reading changes;
+    it never hardcodes a chemical's safety limit itself, only which
+    chemicals are physically present.
+    """
+
+    __tablename__ = "zone_inventory"
+
+    id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
+    zone_id: Mapped[str] = Column(String, nullable=False, index=True)
+    chemical_name: Mapped[str] = Column(String, nullable=False)

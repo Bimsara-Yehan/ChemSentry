@@ -22,16 +22,27 @@ from sqlalchemy.orm import Session
 
 # Import Agent A retrieval, Agent B & Safety State Machine components
 from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
+from agents.agent_c_environment.zone_inventory import seed_default_zone_inventory
 from agents.protocols.schemas import (
     SafetyEvaluationRequest,
     SafetyEvaluationResult,
     SafetyState,
 )
-from api.database import check_db_health, get_db, get_db_schema_info, init_db
+from api.database import (
+    SessionLocal,
+    check_db_health,
+    get_db,
+    get_db_schema_info,
+    init_db,
+)
 
-# Importing these registers AlertRecord/AuditLogRecord on Base.metadata
-# before init_db() runs at startup -- without this import having happened,
-# Base.metadata.create_all() would silently create no tables for them.
+# Importing these registers AlertRecord/AuditLogRecord/ZoneInventoryRecord on
+# Base.metadata before init_db() runs at startup -- without this import
+# having happened, Base.metadata.create_all() would silently create no
+# tables for them. (ZoneInventoryRecord itself is unused by name here --
+# defined in the same module as AlertRecord, so importing that already
+# registers it -- but seed_default_zone_inventory() below is what actually
+# populates it.)
 from api.db_models import AlertRecord, AuditLogRecord, next_alert_id
 from api.models import (
     HealthCheck,
@@ -106,6 +117,22 @@ retriever = _load_retriever()
 init_db()
 
 
+def _seed_zone_inventory() -> None:
+    """Populate Agent C's zone inventory on first run (idempotent, see
+    seed_default_zone_inventory's docstring) -- same "call at import time,
+    not only the startup event" reasoning as init_db() above: a plain
+    TestClient(app) never fires on_event("startup"), so this must not be
+    the only place it's called."""
+    db = SessionLocal()
+    try:
+        seed_default_zone_inventory(db)
+    finally:
+        db.close()
+
+
+_seed_zone_inventory()
+
+
 # ============================================================================
 # Lifecycle Events
 # ============================================================================
@@ -115,6 +142,7 @@ init_db()
 async def startup_event():
     """Initialize database on app startup."""
     init_db()
+    _seed_zone_inventory()
     print("✅ Database initialized")
 
 
