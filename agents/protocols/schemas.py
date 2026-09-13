@@ -1,10 +1,27 @@
 """Pydantic schema definitions shared across agents (M2/M3/M4)."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Optional, Set
 
 from pydantic import BaseModel, Field
+
+from extraction.models import ExtractionMethod, SourceAuthority
+
+# Re-exported so existing callers that only import from this module still see
+# these two enums here -- ProvenancedThreshold now carries both, and they're
+# the same enums extraction/models.py's ExtractionResult uses, not separate
+# duplicates, so a value round-trips unchanged through the conversion in
+# agents/agent_a_retrieval/provenance_bridge.py.
+__all__ = [
+    "SafetyState",
+    "ThresholdDirection",
+    "ProvenancedThreshold",
+    "SafetyEvaluationRequest",
+    "SafetyEvaluationResult",
+    "ExtractionMethod",
+    "SourceAuthority",
+]
 
 
 class SafetyState(str, Enum):
@@ -58,6 +75,42 @@ class ProvenancedThreshold(BaseModel):
     hazard_statements: Optional[Set[str]] = Field(
         default=None,
         description="Hazard statement codes (e.g. H225) extracted alongside this threshold, if any",
+    )
+
+    # --- Extraction-layer provenance (plan §9) -----------------------------
+    # These mirror extraction.models.ExtractionResult's provenance fields.
+    # Added so a claim converted from ExtractionResult (see
+    # agents/agent_a_retrieval/provenance_bridge.py) doesn't lose them on the
+    # way into the safety-evaluation path -- before this, only sds_id,
+    # supplier_name, section_number, authority_score and citation survived,
+    # and full per-claim provenance was only ever true inside the
+    # unconnected extraction layer, never end-to-end.
+    sds_revision: str = Field(
+        default="unknown", description="SDS version string (plan §10)"
+    )
+    revision_date: Optional[date] = Field(
+        default=None, description="Date the SDS was last revised by the supplier"
+    )
+    page_number: Optional[int] = Field(
+        default=None, description="Page number the value was extracted from"
+    )
+    original_text_span: Optional[str] = Field(
+        default=None,
+        description="Exact source text the extractor matched, for audit/citation",
+    )
+    extraction_method: Optional[ExtractionMethod] = Field(
+        default=None, description="How the underlying value was extracted"
+    )
+    confidence: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, description="Extraction confidence score"
+    )
+    source_authority: Optional[SourceAuthority] = Field(
+        default=None,
+        description=(
+            "Which tier of the source authority hierarchy (plan §7) this "
+            "claim's document belongs to -- distinct from authority_score, "
+            "which weighs supplier trust for conflict tie-breaking"
+        ),
     )
 
 

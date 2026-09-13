@@ -12,6 +12,7 @@ Auth flow:
 """
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -19,15 +20,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-# Import Agent B & Safety State Machine components
+# Import Agent A retrieval, Agent B & Safety State Machine components
+from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
 from agents.protocols.schemas import (
-    ProvenancedThreshold,
     SafetyEvaluationRequest,
     SafetyEvaluationResult,
     SafetyState,
-    ThresholdDirection,
 )
 from api.database import check_db_health, get_db, get_db_schema_info, init_db
+
+# Importing these registers AlertRecord/AuditLogRecord on Base.metadata
+# before init_db() runs at startup -- without this import having happened,
+# Base.metadata.create_all() would silently create no tables for them.
+from api.db_models import AlertRecord, AuditLogRecord, next_alert_id
 from api.models import (
     HealthCheck,
     QueryRequest,
@@ -64,66 +69,41 @@ app.add_middleware(
 # Initialize engines
 evaluator = DeterministicSafetyEvaluator()
 
-# STOPGAP: Agent A's retrieval pipeline (corpus, index, TF-IDF ranking) does not exist
-# yet, so there is nothing real to query here. These are hand-entered placeholder
-# values, not thresholds retrieved from a versioned SDS document -- they exist only to
-# unblock API/frontend integration and MUST be replaced by real Agent A retrieval
-# before this project can claim "no hardcoded thresholds" (see CLAUDE.md).
-MOCK_SDS_DATABASE_PENDING_AGENT_A_RETRIEVAL = {
-    "toluene": [
-        ProvenancedThreshold(
-            metric_name="max_storage_temperature",
-            value=25.0,
-            unit="C",
-            direction=ThresholdDirection.MAX,
-            sds_id="SDS_TOL_001",
-            supplier_name="ABC Chemicals",
-            section_number="Section 7",
-            authority_score=1.0,
-            citation="ABC Chemicals SDS Rev 2026-02 §7, p.5",
-        ),
-        ProvenancedThreshold(
-            metric_name="flash_point",
-            value=4.4,
-            unit="C",
-            direction=ThresholdDirection.MIN,
-            sds_id="SDS_TOL_001",
-            supplier_name="ABC Chemicals",
-            section_number="Section 9",
-            authority_score=1.0,
-            citation="ABC Chemicals SDS Rev 2026-02 §9, p.7",
-        ),
-    ],
-    "ethanol": [
-        ProvenancedThreshold(
-            metric_name="max_storage_temperature",
-            value=30.0,
-            unit="C",
-            direction=ThresholdDirection.MAX,
-            sds_id="SDS_ETH_002",
-            supplier_name="Sigma Aldrich",
-            section_number="Section 7",
-            authority_score=1.0,
-            citation="Sigma Aldrich SDS Rev 2025-10 §7",
-        )
-    ],
-    "acetone": [
-        ProvenancedThreshold(
-            metric_name="max_storage_temperature",
-            value=20.0,
-            unit="C",
-            direction=ThresholdDirection.MAX,
-            sds_id="SDS_ACE_003",
-            supplier_name="Merck",
-            section_number="Section 7",
-            authority_score=1.0,
-            citation="Merck SDS Rev 2026-01 §7",
-        )
-    ],
-}
+# Real corpus location -- gitignored (see .gitignore), populated by dropping
+# local SDS PDFs in. A fresh clone or CI checkout has none, which is why
+# _load_retriever() falls back to an empty CorpusRetriever rather than
+# failing: an empty corpus correctly makes every query resolve to nothing,
+# which /safety/evaluate turns into UNKNOWN (see
+# safety/state_machine.py's "no thresholds retrieved" path) -- the honest
+# behaviour per CLAUDE.md, not a fabricated verdict.
+CORPUS_RAW_DIR = Path(__file__).resolve().parent.parent / "corpus" / "raw"
 
-# In-memory alerts registry for Supervisor Dashboard & Sign-Off workflow
-ALERTS_REGISTRY = []
+
+def _load_retriever() -> CorpusRetriever:
+    """Build the real Agent A retriever from corpus/raw/ at startup.
+
+    Tests override the module-level `retriever` directly with a small
+    synthetic fixture corpus (see tests/test_api/test_api_gateway.py) rather
+    than depending on real PDFs being present, since corpus/raw/ is
+    gitignored and empty in CI.
+    """
+    if CORPUS_RAW_DIR.is_dir() and any(CORPUS_RAW_DIR.glob("*.pdf")):
+        return CorpusRetriever.from_local_pdfs(CORPUS_RAW_DIR)
+    return CorpusRetriever([])
+
+
+retriever = _load_retriever()
+
+# Called at import time, not only registered as a startup event: FastAPI's
+# on_event("startup") does not fire for a plain `TestClient(app)` unless it's
+# used as a context manager (`with TestClient(app) as client:`), which this
+# project's test suite doesn't do. Relying on the event alone meant tables
+# were only ever created if some earlier test run had already left them on
+# disk -- true locally by accident, false on a fresh clone or in CI, where
+# every /alerts, /admin/sign-off, and WARNING-path /safety/evaluate call
+# failed with "no such table: alerts". create_all() is idempotent, so
+# calling it here and again in the startup event below is harmless.
+init_db()
 
 
 # ============================================================================
@@ -208,7 +188,9 @@ async def get_current_user_info(user: UserInfo = Depends(get_current_user)):
 
 @app.post("/safety/evaluate", response_model=SafetyEvaluationResult)
 async def evaluate_safety_endpoint(
-    req: SafetyEvaluationRequest, user: UserInfo = Depends(get_current_user)
+    req: SafetyEvaluationRequest,
+    user: UserInfo = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Execute deterministic safety evaluation for a chemical reading.
 
@@ -223,30 +205,46 @@ async def evaluate_safety_endpoint(
             detail="Analyst or Admin role required for safety evaluation",
         )
 
-    chem_key = req.chemical_name.lower().strip()
     retrieved_thresholds = [
         t
-        for t in MOCK_SDS_DATABASE_PENDING_AGENT_A_RETRIEVAL.get(chem_key, [])
+        for t in retriever.get_thresholds(req.chemical_name)
         if t.metric_name == req.metric_name
     ]
 
     result = evaluator.evaluate(req, retrieved_thresholds)
 
-    # If WARNING state, automatically record in ALERTS_REGISTRY for Supervisor Dashboard
+    # If WARNING state, persist the alert and an audit-log entry (plan §17:
+    # "append-only audit log of every alert and sign-off"). Both survive a
+    # process restart now -- neither did when this was an in-memory list.
     if result.state == SafetyState.WARNING:
-        alert_record = {
-            "alert_id": f"ALT_{len(ALERTS_REGISTRY) + 1:04d}",
-            "zone_id": req.zone_id,
-            "chemical_name": req.chemical_name,
-            "current_value": req.current_value,
-            "unit": req.unit,
-            "threshold_value": result.threshold_value,
-            "reasoning": result.reasoning,
-            "status": "pending_review",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "created_by": user.username,
-        }
-        ALERTS_REGISTRY.append(alert_record)
+        alert_id = next_alert_id(db)
+        db.add(
+            AlertRecord(
+                alert_id=alert_id,
+                zone_id=req.zone_id,
+                chemical_name=req.chemical_name,
+                current_value=req.current_value,
+                unit=req.unit,
+                threshold_value=result.threshold_value,
+                reasoning=result.reasoning,
+                status="pending_review",
+                created_by=user.username,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        db.add(
+            AuditLogRecord(
+                action="alert_created",
+                user_id=user.username,
+                resource=alert_id,
+                details={
+                    "zone_id": req.zone_id,
+                    "chemical_name": req.chemical_name,
+                    "metric_name": req.metric_name,
+                },
+            )
+        )
+        db.commit()
 
     return result
 
@@ -265,8 +263,7 @@ async def query_chemical(
             detail="Analyst role required for queries",
         )
 
-    chem_key = request.chemical_name.lower().strip()
-    thresholds_list = MOCK_SDS_DATABASE_PENDING_AGENT_A_RETRIEVAL.get(chem_key, [])
+    thresholds_list = retriever.get_thresholds(request.chemical_name)
 
     threshold_dicts = [
         {
@@ -302,9 +299,12 @@ async def query_chemical(
 
 
 @app.get("/alerts")
-async def list_alerts(user: UserInfo = Depends(get_current_user)):
+async def list_alerts(
+    user: UserInfo = Depends(get_current_user), db: Session = Depends(get_db)
+):
     """List all safety alerts in review queue (for Supervisor Dashboard)."""
-    return {"alerts": ALERTS_REGISTRY}
+    alerts = db.query(AlertRecord).order_by(AlertRecord.id).all()
+    return {"alerts": [alert.to_dict() for alert in alerts]}
 
 
 @app.post("/admin/sign-off")
@@ -313,28 +313,35 @@ async def sign_off_alert(
     approved: bool,
     notes: Optional[str] = "",
     user: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
 ):
     """Sign off on an alert (Supervisor/Admin only).
 
     Requires: ADMIN role.
     """
-    found_alert = None
-    for alert in ALERTS_REGISTRY:
-        if alert["alert_id"] == alert_id:
-            alert["status"] = "approved" if approved else "rejected"
-            alert["signed_by"] = user.username
-            alert["notes"] = notes
-            alert["signed_at"] = datetime.now(timezone.utc).isoformat()
-            found_alert = alert
-            break
-
-    if not found_alert:
+    alert = db.query(AlertRecord).filter(AlertRecord.alert_id == alert_id).first()
+    if not alert:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Alert '{alert_id}' not found in the review queue",
         )
 
-    return {"status": "sign_off_recorded", "alert": found_alert}
+    alert.status = "approved" if approved else "rejected"
+    alert.signed_by = user.username
+    alert.notes = notes
+    alert.signed_at = datetime.now(timezone.utc)
+    db.add(
+        AuditLogRecord(
+            action="sign_off",
+            user_id=user.username,
+            resource=alert_id,
+            details={"approved": approved, "notes": notes},
+        )
+    )
+    db.commit()
+    db.refresh(alert)
+
+    return {"status": "sign_off_recorded", "alert": alert.to_dict()}
 
 
 # ============================================================================

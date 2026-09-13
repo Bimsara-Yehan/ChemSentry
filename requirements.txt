@@ -21,6 +21,9 @@ mlxtend
 requests
 beautifulsoup4
 
+# PDF text extraction (M1 -- local SDS corpus)
+pdfplumber
+
 # MQTT (Agent C)
 paho-mqtt
 
