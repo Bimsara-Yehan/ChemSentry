@@ -65,3 +65,29 @@ have both suppliers agree — clearly labelled as such in the results, not prese
 corpus-derived. Run via `python -m evaluation.run_layer5_eval`; results land in
 `evaluation/results/layer5_state_accuracy.md`. Same `corpus/raw/` dependency as Layer 1 —
 manual/local run, not CI-gated.
+
+## `layer3_ground_truth.csv`
+
+Information-extraction ground truth (CAS numbers, storage temperature, flash point,
+boiling point) for every document in the real corpus, built by direct, independent
+reading of the raw extracted text — including the negative cases ("Not applicable",
+"see product label") that should correctly yield no extraction. Humidity limits and
+exposure limits are intentionally absent — zero real occurrences anywhere in this
+corpus — and PPE is intentionally absent from the quantitative scoring for a different
+reason (real signal mixed with known generic-word noise); both are explained in
+`evaluation/run_layer3_eval.py`'s module docstring rather than silently skipped. Run via
+`python -m evaluation.run_layer3_eval`; results land in
+`evaluation/results/layer3_extraction_quality.md`. Same `corpus/raw/` dependency as
+Layer 1 — manual/local run, not CI-gated.
+
+## `layer4_conflict_scenarios.csv`
+
+Conflict-detection scenarios exercising `agents/agent_b_analysis/reconciler.py`'s two
+mechanisms (numeric variance, hazard-statement Jaccard) directly — no corpus/index
+involved, so this one has **no** `corpus/raw/` dependency and is safe to run anywhere,
+including CI, though it isn't currently wired into pytest as an assertion-gated test.
+Hazard scenarios use real H-codes extracted from real chemicals this session (see the
+script's module docstring for which); the numeric tolerance-boundary scenarios are
+synthetic, since this corpus's one real multi-supplier pair (sulfuric acid) agrees
+rather than disagrees. Run via `python -m evaluation.run_layer4_eval`; results land in
+`evaluation/results/layer4_conflict_detection.md`.
