@@ -115,6 +115,19 @@ _STORAGE_TEMP_MIN_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Label:value storage temperature range, e.g. real Sigma-Aldrich/GHS-EU SDS
+# text: "Recommended storage temperature : 15 - 25 °C" (conventional layout)
+# or, when a PDF's two-column label wraps across a line break, extracted as
+# "Recommended storage : 15 - 25 °C\ntemperature" -- both forms confirmed
+# against real SDS PDFs in corpus/raw/, not invented (see ADR pending).
+# Captures an optional range (min, max) or a single ceiling value.
+_STORAGE_TEMP_LABEL_RE = re.compile(
+    r"storage(?:\s+temperature)?\s*:\s*"
+    r"(-?\d+\.?\d*)\s*(?:[-–]\s*(-?\d+\.?\d*))?\s*°?\s*([CF])"
+    r"(?:\s*\n\s*temperature\b)?",
+    re.IGNORECASE,
+)
+
 # Humidity limits: "relative humidity below 60%"
 _HUMIDITY_RE = re.compile(
     r"(?:humidity|RH|relative\s+humidity).{0,40}?"
@@ -124,7 +137,12 @@ _HUMIDITY_RE = re.compile(
 )
 
 # CAS registry numbers: 78-93-3, 1333-74-0
-_CAS_RE = re.compile(r"\b(\d{2,7}-\d{2}-\d)\b")
+#
+# Negative lookbehind excludes a CAS-shaped tail embedded inside a longer
+# EU CLP Index-No. (format DDD-DDD-DD-D, e.g. "607-750-00-3"): confirmed
+# against a real SDS PDF where this regex, without the lookbehind, extracted
+# "750-00-3" out of the Index-No. and reported it as a second CAS number.
+_CAS_RE = re.compile(r"(?<!\d{3}-)\b(\d{2,7}-\d{2}-\d)\b")
 
 # H-codes: H301, H301+H311+H331
 _H_CODE_RE = re.compile(r"\b(H\d{3}[A-Za-z]?(?:\s*\+\s*H\d{3}[A-Za-z]?)*)\b")
@@ -147,6 +165,16 @@ _PPE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Label:value PPE material, e.g. real Sigma-Aldrich/GHS-EU SDS Section 8
+# text: "Hand protection\nMaterial : Nitrile rubber" -- confirmed against
+# real SDS PDFs, where _PPE_RE above only ever matches the generic word
+# "protection" on this vendor's label-formatted layout and misses the
+# actual glove/eyewear material entirely.
+_PPE_MATERIAL_RE = re.compile(
+    r"Material\s*:\s*([A-Za-z][A-Za-z\-\s]{2,40}?)\s*(?:\n|$)",
+    re.IGNORECASE,
+)
+
 # Flash point: "Flash point: 4 °C"
 _FLASH_POINT_RE = re.compile(
     r"(?:flash\s*point).{0,30}?" r"(\d+\.?\d*)\s*°?\s*([CF])",
@@ -159,12 +187,36 @@ _BOILING_POINT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Incompatible materials: "Incompatible with strong oxidizers, acids"
+# Incompatible materials: "Incompatible with strong oxidizers, acids".
+#
+# Real SDS Section 10 text (confirmed against multiple real SDS PDFs, e.g.
+# sodium hydroxide, hydrochloric acid) rarely uses the word "incompatible"
+# at all -- it phrases the same claim as "Violent reactions possible with:",
+# "can decompose violently in contact with:", or "Risk of ignition or
+# formation of inflammable gases or vapours with:", each followed by a
+# newline-separated list of substances rather than a single sentence.
+# Shared between the trigger and the terminator: a real SDS Section 10 packs
+# several of these sub-headings back to back with no period or blank line
+# between them (confirmed: sodium hydroxide's Section 10 runs "Violent
+# reactions possible with: <30+ substances> can decompose violently in
+# contact with: ..." as one unbroken block), so the *next* trigger phrase is
+# what actually ends the current one's list -- a bare length cap without this
+# lookahead either runs the list together with the next hazard's list, or
+# (if capped too short) fails to match at all when a real list has no period
+# within the cap.
+_INCOMPATIBILITY_TRIGGERS = (
+    r"incompatible|incompatibility|avoid\s+contact|"
+    r"violent\s+reactions?\s+possible|"
+    r"can\s+decompose\s+violently\s+in\s+contact|"
+    r"risk\s+of\s+ignition\s+or\s+formation\s+of\s+inflammable\s+gases?\s+or\s+vapours?|"
+    r"risk\s+of\s+explosion"
+)
+
 _INCOMPATIBILITY_RE = re.compile(
-    r"(?:incompatible|incompatibility|avoid\s+contact).{0,20}?"
-    r"(?:with\s+)?"
-    r"(.{5,120}?)(?:\.|$)",
-    re.IGNORECASE,
+    rf"(?:{_INCOMPATIBILITY_TRIGGERS})"
+    r".{0,20}?(?:with\s*:?\s*)?"
+    rf"(.{{5,400}}?)(?=\n\s*\n|\.|\n\s*(?:{_INCOMPATIBILITY_TRIGGERS})|\Z)",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -209,7 +261,14 @@ def extract_storage_temp(
 ) -> list[ExtractionResult]:
     """Extract storage temperature limits from SDS text.
 
-    Looks for patterns like 'store below 25 °C' or 'keep under 30°C'.
+    Two source phrasings are matched, both confirmed against real supplier
+    SDS PDFs (see corpus/raw/), not just imagined examples:
+        - Sentence style:  "store below 25 °C", "keep under 30°C"
+        - Label:value style, the dominant real-world format for at least one
+          major supplier (Sigma-Aldrich/GHS-EU): "Recommended storage
+          temperature : 15 - 25 °C". A two-column PDF layout can wrap this
+          across a line break as "storage : 15 - 25 °C\\ntemperature" --
+          the label regex tolerates both.
 
     Args:
         text: Raw section text (typically Section 7).
@@ -252,6 +311,53 @@ def extract_storage_temp(
                 **kwargs,
             )
         )
+
+    for match in _regex_findall_safe(_STORAGE_TEMP_LABEL_RE, text):
+        low, high, unit_letter = match.group(1), match.group(2), match.group(3)
+        unit = f"°{unit_letter.upper()}"
+
+        if high is not None:
+            # A range: "15 - 25 °C" -> min=15, max=25.
+            results.append(
+                _make_result(
+                    chemical=chemical,
+                    claim_type=ClaimType.STORAGE_TEMP_MIN,
+                    value=low,
+                    unit=unit,
+                    section_number=section_number,
+                    original_text_span=match.group(0),
+                    confidence=0.85,
+                    **kwargs,
+                )
+            )
+            results.append(
+                _make_result(
+                    chemical=chemical,
+                    claim_type=ClaimType.STORAGE_TEMP_MAX,
+                    value=high,
+                    unit=unit,
+                    section_number=section_number,
+                    original_text_span=match.group(0),
+                    confidence=0.85,
+                    **kwargs,
+                )
+            )
+        else:
+            # A single labelled value with no explicit direction word --
+            # read as a ceiling, the conventional meaning of a bare storage
+            # temperature figure on an SDS.
+            results.append(
+                _make_result(
+                    chemical=chemical,
+                    claim_type=ClaimType.STORAGE_TEMP_MAX,
+                    value=low,
+                    unit=unit,
+                    section_number=section_number,
+                    original_text_span=match.group(0),
+                    confidence=0.75,
+                    **kwargs,
+                )
+            )
 
     return results
 
@@ -390,7 +496,13 @@ def extract_exposure_limits(
 def extract_ppe(
     text: str, section_number: int = 8, chemical: str = "", **kwargs
 ) -> list[ExtractionResult]:
-    """Extract PPE (Personal Protective Equipment) requirements from SDS text."""
+    """Extract PPE (Personal Protective Equipment) requirements from SDS text.
+
+    Matches two source phrasings, both confirmed against real supplier SDS
+    PDFs: sentence style ("wear nitrile gloves") and label:value style
+    ("Hand protection\\nMaterial : Nitrile rubber"), the format that turned
+    out to be dominant in a real batch of Sigma-Aldrich/GHS-EU SDS PDFs.
+    """
     results: list[ExtractionResult] = []
 
     for match in _regex_findall_safe(_PPE_RE, text):
@@ -404,6 +516,21 @@ def extract_ppe(
                 section_number=section_number,
                 original_text_span=match.group(0),
                 confidence=0.82,
+                **kwargs,
+            )
+        )
+
+    for match in _regex_findall_safe(_PPE_MATERIAL_RE, text):
+        material = match.group(1).strip().lower()
+        results.append(
+            _make_result(
+                chemical=chemical,
+                claim_type=ClaimType.PPE_REQUIREMENT,
+                value=material,
+                unit="",
+                section_number=section_number,
+                original_text_span=match.group(0),
+                confidence=0.85,
                 **kwargs,
             )
         )
