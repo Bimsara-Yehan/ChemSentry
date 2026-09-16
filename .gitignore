@@ -41,3 +41,6 @@ Thumbs.db
 # --- IDE ---
 .vscode/
 .idea/
+
+# --- Personal session notes (not shared with the team) ---
+SESSION_LOG.md
