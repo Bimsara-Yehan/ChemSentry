@@ -31,6 +31,24 @@ const ZONE_LABELS = {
   Zone_C: 'Zone C — Oxidizer Storage',
 };
 
+// Mirrors the backend RBAC gates in api/main.py: viewer is read-only on every
+// mutating route (telemetry, query, sign-off); analyst adds telemetry + query;
+// only admin can sign off an alert (require_role(UserRole.ADMIN)).
+const ROLE_INFO = {
+  viewer: {
+    label: 'Read-only access',
+    detail: 'You can monitor zones and alerts. Submitting readings, running queries, and signing off alerts require an analyst or admin account.',
+  },
+  analyst: {
+    label: 'Analyst access',
+    detail: 'You can submit telemetry readings and query retrieved safety data. Alert sign-off requires an admin account.',
+  },
+  admin: {
+    label: 'Admin access',
+    detail: 'Full access, including approving or rejecting alerts.',
+  },
+};
+
 function LoginScreen({ onLogin, loading, error }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -50,9 +68,12 @@ function LoginScreen({ onLogin, loading, error }) {
       }}
     >
       <div className="card" style={{ maxWidth: '380px', width: '100%' }}>
-        <div className="card-title" style={{ marginBottom: '16px' }}>
-          🔐 ChemSentry Sign-In
+        <div className="card-title" style={{ marginBottom: '4px' }}>
+          Sign in to ChemSentry
         </div>
+        <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '18px' }}>
+          Enter your credentials to access the monitoring dashboard.
+        </p>
         <form
           onSubmit={handleSubmit}
           style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
@@ -75,14 +96,14 @@ function LoginScreen({ onLogin, loading, error }) {
           </button>
         </form>
         {error && (
-          <div className="provenance-box" style={{ marginTop: '16px' }}>
-            <div className="provenance-title">LOGIN FAILED</div>
+          <div className="provenance-box is-error" style={{ marginTop: '16px' }}>
+            <div className="provenance-title">Sign-in failed</div>
             {error}
           </div>
         )}
-        <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '16px' }}>
-          Demo users: viewer_user/viewer123 · analyst_user/analyst123 ·
-          admin_user/admin123
+        <p className="help-text">
+          Demo accounts — viewer_user / viewer123 · analyst_user / analyst123 ·
+          admin_user / admin123
         </p>
       </div>
     </div>
@@ -216,7 +237,7 @@ function App() {
             <div className="brand-logo">CS</div>
             <div className="brand-title">
               <h1>ChemSentry</h1>
-              <p>Agentic AI Chemical Safety & Decision-Support System</p>
+              <p>Chemical Safety Monitoring</p>
             </div>
           </div>
         </header>
@@ -239,21 +260,20 @@ function App() {
           <div className="brand-logo">CS</div>
           <div className="brand-title">
             <h1>ChemSentry</h1>
-            <p>Agentic AI Chemical Safety & Decision-Support System</p>
+            <p>Chemical Safety Monitoring</p>
           </div>
         </div>
         <div className="header-status">
           <div className="status-badge">
             <span className="pulse-dot"></span>
-            SYSTEM ONLINE (API v0.1.0)
+            System Online
           </div>
-          <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
-            {currentUser?.username} ({currentUser?.role}){' '}
-            <button
-              className="action-btn"
-              style={{ padding: '2px 10px', fontSize: '11px', marginLeft: '8px' }}
-              onClick={handleLogout}
-            >
+          <div className="user-chip">
+            <span>
+              <strong>{currentUser?.username}</strong>
+            </span>
+            <span className="role-tag">{currentUser?.role}</span>
+            <button className="logout-btn" onClick={handleLogout}>
               Log out
             </button>
           </div>
@@ -266,21 +286,27 @@ function App() {
           className={`tab-btn ${activeTab === 'live' ? 'active' : ''}`}
           onClick={() => setActiveTab('live')}
         >
-          🌡️ Live Environment
+          Live Environment
         </button>
         <button
           className={`tab-btn ${activeTab === 'reconciliation' ? 'active' : ''}`}
           onClick={() => setActiveTab('reconciliation')}
         >
-          🔍 SDS Retrieval & Reconciliation
+          Retrieval &amp; Reconciliation
         </button>
         <button
           className={`tab-btn ${activeTab === 'supervisor' ? 'active' : ''}`}
           onClick={() => setActiveTab('supervisor')}
         >
-          🛡️ Supervisor Sign-Off ({pendingAlertCount})
+          Sign-Off Queue
+          {pendingAlertCount > 0 && <span className="tab-count">{pendingAlertCount}</span>}
         </button>
       </nav>
+
+      <div className={`role-banner role-banner-${currentUser?.role}`}>
+        <span className="role-banner-label">{ROLE_INFO[currentUser?.role]?.label}</span>
+        <span className="role-banner-detail">{ROLE_INFO[currentUser?.role]?.detail}</span>
+      </div>
 
       {/* Tab 1: Live Environment View */}
       {activeTab === 'live' && (
@@ -288,9 +314,7 @@ function App() {
           <div className="main-content">
             <div className="card">
               <div className="card-header">
-                <div className="card-title">
-                  <span>📍 Storage Zone Telemetry</span>
-                </div>
+                <div className="card-title">Zone Telemetry</div>
                 <div className="zone-selector">
                   {Object.keys(ZONE_LABELS).map((z) => (
                     <button
@@ -305,17 +329,19 @@ function App() {
               </div>
 
               {zonesError && (
-                <div className="provenance-box">
-                  <div className="provenance-title">FAILED TO LOAD ZONE DATA</div>
+                <div className="provenance-box is-error">
+                  <div className="provenance-title">Failed to load zone data</div>
                   {zonesError}
                 </div>
               )}
 
               {currentZoneData ? (
                 <>
-                  <h2>{ZONE_LABELS[activeZone] || activeZone}</h2>
-                  <p style={{ color: 'var(--text-muted)', marginBottom: '20px' }}>
-                    Monitored by ESP32 sensor node over MQTT TLS
+                  <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '4px' }}>
+                    {ZONE_LABELS[activeZone] || activeZone}
+                  </h2>
+                  <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '18px' }}>
+                    Latest reading from this zone's sensor feed
                   </p>
 
                   <div className="metrics-row">
@@ -328,7 +354,6 @@ function App() {
                         <span className="metric-unit">°C</span>
                       </div>
                       <div className="metric-subtext">
-                        Status:{' '}
                         <span className={`state-badge state-${currentZoneData.safety_state}`}>
                           {currentZoneData.safety_state}
                         </span>
@@ -341,15 +366,18 @@ function App() {
                         {currentZoneData.last_reading.humidity_percent}{' '}
                         <span className="metric-unit">%</span>
                       </div>
-                      <div className="metric-subtext">Not evaluated (no retrieved threshold)</div>
+                      <div className="metric-subtext">Not evaluated — no threshold retrieved</div>
                     </div>
                   </div>
 
                   {currentZoneData.checks.map((check, idx) => (
-                    <div className="provenance-box" key={idx}>
+                    <div
+                      className={`provenance-box ${check.state === 'WARNING' ? 'is-warning' : ''}`}
+                      key={idx}
+                    >
                       <div className="provenance-title">
-                        {check.state === 'WARNING' ? '⚠️ ' : ''}
-                        {check.chemical_name} — {check.metric_name} [{check.state}]
+                        {check.chemical_name} — {check.metric_name}{' '}
+                        <span className={`state-badge state-${check.state}`}>{check.state}</span>
                       </div>
                       {check.reasoning}
                     </div>
@@ -362,15 +390,12 @@ function App() {
 
             <div className="card">
               <div className="card-title" style={{ marginBottom: '16px' }}>
-                🧪 Active Chemicals in Zone
+                Chemicals Stored in This Zone
               </div>
               <div className="inventory-list">
                 {(currentZoneData?.chemicals || []).map((chem, idx) => (
                   <div key={idx} className="inventory-item">
                     <span className="chem-tag">{chem}</span>
-                    <span style={{ color: 'var(--text-muted)' }}>
-                      Database-tagged (simulated inventory)
-                    </span>
                   </div>
                 ))}
               </div>
@@ -379,12 +404,12 @@ function App() {
 
           <div className="side-content">
             <div className="card">
-              <div className="card-title" style={{ marginBottom: '16px' }}>
-                🎮 Telemetry Simulator
+              <div className="card-title" style={{ marginBottom: '10px' }}>
+                Send a Test Reading
               </div>
               <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-                Sends a real reading to POST /zones/{activeZone}/telemetry and shows the
-                real deterministic evaluation returned.
+                Submits a live reading to this zone and shows the resulting safety
+                evaluation, retrieved and cited in real time.
               </p>
               <button
                 className="action-btn btn-warning"
@@ -392,18 +417,18 @@ function App() {
                 onClick={() => handleSendReading(demoTemps.excursion)}
                 disabled={isViewer || telemetryLoading}
               >
-                🔥 Send Excursion Reading ({demoTemps.excursion} °C)
+                Send Excursion Reading ({demoTemps.excursion} °C)
               </button>
               <button
-                className="action-btn"
-                style={{ width: '100%', background: '#2A2F36' }}
+                className="action-btn btn-secondary"
+                style={{ width: '100%' }}
                 onClick={() => handleSendReading(demoTemps.safe)}
                 disabled={isViewer || telemetryLoading}
               >
-                🔄 Send Normal Reading ({demoTemps.safe} °C)
+                Send Normal Reading ({demoTemps.safe} °C)
               </button>
               {isViewer && (
-                <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '10px' }}>
+                <p className="help-text">
                   Viewer role is read-only; sign in as analyst or admin to submit telemetry.
                 </p>
               )}
@@ -417,9 +442,13 @@ function App() {
         <div className="dashboard-grid">
           <div className="main-content">
             <div className="card">
-              <div className="card-title" style={{ marginBottom: '16px' }}>
-                🔍 Classical IR Retrieval & Reconciliation Engine
+              <div className="card-title" style={{ marginBottom: '4px' }}>
+                Search Retrieved Safety Data
               </div>
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                Look up a chemical to see its retrieved thresholds, citations, and any
+                conflicts between supplier documents.
+              </p>
               <form onSubmit={handleSearch} style={{ display: 'flex', gap: '12px' }}>
                 <input
                   type="text"
@@ -427,22 +456,23 @@ function App() {
                   placeholder="Enter chemical name (e.g. Ethanol, Sodium hydroxide)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  disabled={isViewer}
                 />
-                <button type="submit" className="action-btn" disabled={queryLoading}>
+                <button type="submit" className="action-btn" disabled={isViewer || queryLoading}>
                   {queryLoading ? 'Searching…' : 'Search'}
                 </button>
               </form>
               {isViewer && (
-                <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '10px' }}>
-                  Viewer role cannot query -- sign in as analyst or admin.
+                <p className="help-text">
+                  Viewer role cannot query — sign in as analyst or admin.
                 </p>
               )}
             </div>
 
             {queryError && (
               <div className="card">
-                <div className="provenance-box">
-                  <div className="provenance-title">QUERY FAILED</div>
+                <div className="provenance-box is-error">
+                  <div className="provenance-title">Query failed</div>
                   {queryError}
                 </div>
               </div>
@@ -452,8 +482,8 @@ function App() {
               <div className="card">
                 <div className="card-header">
                   <div className="card-title">
-                    Query Evidence for:{' '}
-                    <span style={{ color: 'var(--teal-light)' }}>
+                    Results for{' '}
+                    <span style={{ color: 'var(--accent)' }}>
                       {queryResult.query.chemical_name}
                     </span>
                   </div>
@@ -462,19 +492,19 @@ function App() {
                   </span>
                 </div>
 
-                <h4 style={{ marginBottom: '12px', color: 'var(--text-muted)' }}>
-                  Retrieved Provenanced Thresholds:
+                <h4 style={{ marginBottom: '12px', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)' }}>
+                  Retrieved thresholds
                 </h4>
                 {queryResult.evidence.thresholds.length === 0 && (
-                  <p style={{ color: 'var(--text-dim)', fontSize: '13px' }}>
+                  <p style={{ color: 'var(--text-dim)', fontSize: '13px', marginBottom: '4px' }}>
                     No thresholds resolved for this chemical name in the current corpus.
                   </p>
                 )}
                 {queryResult.evidence.thresholds.map((t, idx) => (
-                  <div key={idx} className="inventory-item" style={{ marginBottom: '10px' }}>
+                  <div key={idx} className="inventory-item" style={{ marginBottom: '8px' }}>
                     <div>
                       <strong>{t.parameter}</strong>:{' '}
-                      <span style={{ color: 'var(--amber-warning)' }}>
+                      <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>
                         {t.value} {t.unit}
                       </span>
                     </div>
@@ -485,8 +515,8 @@ function App() {
                 ))}
 
                 {queryResult.evidence.conflicts.map((conflict, idx) => (
-                  <div key={idx} className="provenance-box">
-                    <div className="provenance-title">🔀 SUPPLIER CONFLICT DETECTED</div>
+                  <div key={idx} className="provenance-box is-warning">
+                    <div className="provenance-title">Supplier conflict detected</div>
                     {conflict}
                   </div>
                 ))}
@@ -497,7 +527,7 @@ function App() {
           <div className="side-content">
             <div className="card">
               <div className="card-title" style={{ marginBottom: '12px' }}>
-                📚 IR Pipeline Info
+                How This Works
               </div>
               <ul
                 style={{
@@ -507,9 +537,9 @@ function App() {
                   paddingLeft: '16px',
                 }}
               >
-                <li><strong>Inverted Index:</strong> Positional word mapping (Lab 03)</li>
-                <li><strong>Tolerant Matching:</strong> k-grams + Levenshtein (Lab 04)</li>
-                <li><strong>Ranking:</strong> TF-IDF Cosine similarity (Lab 05)</li>
+                <li><strong>Inverted index:</strong> positional word mapping (Lab 03)</li>
+                <li><strong>Tolerant matching:</strong> k-grams + Levenshtein (Lab 04)</li>
+                <li><strong>Ranking:</strong> TF-IDF cosine similarity (Lab 05)</li>
                 <li><strong>Reconciliation:</strong> Jaccard conflict filter (Lab 06A)</li>
               </ul>
             </div>
@@ -521,43 +551,42 @@ function App() {
       {activeTab === 'supervisor' && (
         <div className="card">
           <div className="card-header">
-            <div className="card-title">🛡️ Supervisor Alert Review & Sign-Off Queue</div>
+            <div className="card-title">Alert Review &amp; Sign-Off</div>
             <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-              Human-in-the-Loop Architectural Requirement
+              Every WARNING alert requires admin sign-off before it's final
             </span>
           </div>
 
           {alertsError && (
-            <div className="provenance-box">
-              <div className="provenance-title">FAILED TO LOAD ALERTS</div>
+            <div className="provenance-box is-error">
+              <div className="provenance-title">Failed to load alerts</div>
               {alertsError}
             </div>
           )}
 
           <div className="inventory-list">
             {alerts.length === 0 && !alertsError && (
-              <p style={{ color: 'var(--text-muted)', padding: '12px 0' }}>
-                No alerts recorded yet.
-              </p>
+              <p className="empty-state">No alerts recorded yet.</p>
             )}
             {alerts.map((alert) => (
               <div
                 key={alert.alert_id}
                 className="card"
-                style={{ background: '#111418', marginBottom: '16px' }}
+                style={{ background: 'var(--bg-subtle)', marginBottom: '16px' }}
               >
                 <div className="card-header">
                   <div>
-                    <span className="state-badge state-WARNING" style={{ marginRight: '12px' }}>
+                    <span className="role-tag" style={{ marginRight: '10px' }}>
                       {alert.alert_id}
                     </span>
-                    <strong style={{ fontSize: '16px' }}>
-                      {alert.chemical_name} Excursion in {alert.zone_id}
+                    <strong style={{ fontSize: '15px' }}>
+                      {alert.chemical_name} excursion in {alert.zone_id}
                     </strong>
                   </div>
                   <span
                     style={{
-                      fontSize: '13px',
+                      fontSize: '12.5px',
+                      fontWeight: 600,
                       color:
                         alert.status === 'approved'
                           ? 'var(--green-safe)'
@@ -566,27 +595,27 @@ function App() {
                           : 'var(--amber-warning)',
                     }}
                   >
-                    Status: {alert.status.toUpperCase()}
+                    {alert.status.replace('_', ' ').toUpperCase()}
                   </span>
                 </div>
 
-                <div className="metrics-row" style={{ marginTop: '12px' }}>
-                  <div className="metric-box">
+                <div className="metrics-row" style={{ marginTop: '4px' }}>
+                  <div className="metric-box warning">
                     <div className="metric-label">Observed Value</div>
-                    <div className="metric-value" style={{ fontSize: '24px', color: 'var(--amber-warning)' }}>
+                    <div className="metric-value" style={{ fontSize: '22px' }}>
                       {alert.current_value} {alert.unit}
                     </div>
                   </div>
                   <div className="metric-box">
                     <div className="metric-label">Retrieved Threshold</div>
-                    <div className="metric-value" style={{ fontSize: '24px' }}>
+                    <div className="metric-value" style={{ fontSize: '22px' }}>
                       {alert.threshold_value != null ? `${alert.threshold_value} ${alert.unit}` : '—'}
                     </div>
                   </div>
                 </div>
 
-                <div className="provenance-box">
-                  <div className="provenance-title">PROVENANCE / REASONING</div>
+                <div className="provenance-box is-warning">
+                  <div className="provenance-title">Reasoning</div>
                   {alert.reasoning}
                 </div>
 
@@ -598,34 +627,33 @@ function App() {
                         display: 'flex',
                         gap: '12px',
                         alignItems: 'center',
+                        flexWrap: 'wrap',
                       }}
                     >
                       <input
                         type="text"
                         className="input-field"
-                        placeholder="Add Safety Officer sign-off notes..."
+                        placeholder="Add sign-off notes..."
                         value={signOffNote}
                         onChange={(e) => setSignOffNote(e.target.value)}
-                        style={{ flex: 1 }}
+                        style={{ flex: 1, minWidth: '160px' }}
                       />
                       <button className="action-btn" onClick={() => handleSignOff(alert.alert_id, true)}>
-                        Approve Alert
+                        Approve
                       </button>
                       <button
                         className="action-btn btn-danger"
                         onClick={() => handleSignOff(alert.alert_id, false)}
                       >
-                        Reject Alert
+                        Reject
                       </button>
                     </div>
                   ) : (
-                    <p style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-dim)' }}>
-                      Awaiting admin sign-off.
-                    </p>
+                    <p className="help-text">Awaiting admin sign-off.</p>
                   )
                 ) : (
                   <div style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
-                    <strong>Sign-off Notes:</strong> {alert.notes} (by {alert.signed_by})
+                    <strong>Sign-off notes:</strong> {alert.notes} (by {alert.signed_by})
                   </div>
                 )}
               </div>
