@@ -15,9 +15,10 @@ registered on `Base.metadata`), which `api/main.py` does at import time.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, Text
+from sqlalchemy import Column, DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped
 
+from api.crypto import EncryptedJSON, EncryptedText
 from api.database import Base
 
 
@@ -28,6 +29,13 @@ class AlertRecord(Base):
     "evaluation" + "sign-off" table) -- this mirrors exactly what the old
     in-memory dict already stored, just made durable, rather than expanding
     scope into a schema redesign.
+
+    Encryption at rest (api/crypto.py, ADR 0004): the human-authored and
+    identity columns -- reasoning, notes, created_by, signed_by -- are stored
+    as ciphertext. The columns the app filters, sorts or joins on (alert_id,
+    status, zone_id, chemical_name, numeric values, timestamps) stay plaintext
+    because ciphertext with a random IV can never match an equality filter;
+    production covers those with database/volume encryption instead.
     """
 
     __tablename__ = "alerts"
@@ -39,12 +47,12 @@ class AlertRecord(Base):
     current_value: Mapped[float] = Column(Float, nullable=False)
     unit: Mapped[str] = Column(String, nullable=False)
     threshold_value: Mapped[float] = Column(Float, nullable=True)
-    reasoning: Mapped[str] = Column(Text, nullable=False)
+    reasoning: Mapped[str] = Column(EncryptedText, nullable=False)
     status: Mapped[str] = Column(String, nullable=False, default="pending_review")
-    created_by: Mapped[str] = Column(String, nullable=False)
+    created_by: Mapped[str] = Column(EncryptedText, nullable=False)
     created_at: Mapped[datetime] = Column(DateTime, nullable=False)
-    signed_by: Mapped[str] = Column(String, nullable=True)
-    notes: Mapped[str] = Column(Text, nullable=True)
+    signed_by: Mapped[str] = Column(EncryptedText, nullable=True)
+    notes: Mapped[str] = Column(EncryptedText, nullable=True)
     signed_at: Mapped[datetime] = Column(DateTime, nullable=True)
 
     def to_dict(self) -> dict:
@@ -76,15 +84,20 @@ class AuditLogRecord(Base):
     in api/main.py ever issues an UPDATE or DELETE against this table, only
     INSERT. A real deployment would additionally revoke UPDATE/DELETE grants
     at the database-user level; out of scope for local/SQLite dev.
+
+    Encryption at rest (api/crypto.py, ADR 0004): user_id (who acted) and
+    details (the values/notes involved) are ciphertext; action, resource and
+    timestamp stay plaintext so the trail can still be ordered and joined to
+    its alert by `resource`.
     """
 
     __tablename__ = "audit_log"
 
     id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
     action: Mapped[str] = Column(String, nullable=False)  # "alert_created" | "sign_off"
-    user_id: Mapped[str] = Column(String, nullable=False)
+    user_id: Mapped[str] = Column(EncryptedText, nullable=False)
     resource: Mapped[str] = Column(String, nullable=False)  # the alert_id this is about
-    details: Mapped[dict] = Column(JSON, nullable=False)
+    details: Mapped[dict] = Column(EncryptedJSON, nullable=False)
     timestamp: Mapped[datetime] = Column(
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
