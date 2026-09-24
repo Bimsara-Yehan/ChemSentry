@@ -220,6 +220,13 @@ MQTT_TLS_CERT_PATH=./firmware/certs/device.crt
 JWT_SECRET_KEY=replace-with-a-random-string-per-environment
 JWT_ALGORITHM=HS256
 
+# Encryption at rest (api/crypto.py). Generate with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Comma-separate several keys, newest first, to rotate. Leave unset in local dev
+# (a random per-machine key file is created); REQUIRED when CHEMSENTRY_ENV=production.
+CHEMSENTRY_DATA_KEY=
+CHEMSENTRY_ENV=development
+
 # LLM
 ANTHROPIC_API_KEY=your-key-here
 

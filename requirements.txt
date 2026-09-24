@@ -15,6 +15,7 @@ pydantic==2.13.4
 # Auth & security
 pyjwt==2.13.0
 bcrypt==5.0.0
+cryptography==50.0.0  # field-level encryption at rest (api/crypto.py); was only a transitive dep of pdfminer
 
 # Retrieval & NLP (Labs 02-06)
 nltk==3.10.3

@@ -1,6 +1,8 @@
 # --- Environment / secrets ---
 .env
 *.db
+# Per-machine dev key for encryption at rest (api/crypto.py) -- never commit
+.chemsentry_data.key
 
 
 # --- Python ---

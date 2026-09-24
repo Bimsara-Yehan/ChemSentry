@@ -9,6 +9,8 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
 
+from api.crypto import encrypt_existing_plaintext, validate_key_configuration
+
 # Database URL from environment with fallback to SQLite for local dev
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./chemsentry.db")
 
@@ -58,8 +60,16 @@ def init_db():
 
     Call this once on application startup to ensure schema exists.
     In production, use Alembic migrations instead.
+
+    Also enforces encryption at rest (api/crypto.py): validates the data key
+    up front so a missing/invalid production key fails at startup instead of on
+    the first alert, then encrypts any plaintext rows left in an existing
+    database from before encryption existed (idempotent, so safe to run on
+    every start -- and this runs at import time too, see api/main.py).
     """
+    validate_key_configuration()
     Base.metadata.create_all(bind=engine)
+    encrypt_existing_plaintext(engine, Base.metadata)
 
 
 def check_db_health() -> str:
