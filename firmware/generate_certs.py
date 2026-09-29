@@ -81,6 +81,11 @@ def gen_cert_signed(
     for s in san:
         try:
             san_list.append(x509.IPAddress(ip_address(s)))
+            # The ESP32 Arduino core (mbedTLS 2.28) only matches the dialed
+            # host string against dNSName SAN entries and ignores iPAddress
+            # ones, so a broker reached by IP fails with "bad certificate"
+            # unless the IP text is also listed as a DNS name.
+            san_list.append(x509.DNSName(s))
         except Exception:
             san_list.append(x509.DNSName(s))
 
@@ -114,6 +119,16 @@ def main() -> None:
     parser.add_argument(
         "--common-name", default="ChemSentry Local CA", help="CA common name"
     )
+    parser.add_argument(
+        "--server-san",
+        default="",
+        help=(
+            "comma-separated extra hostnames/IPs for the broker cert's SAN, e.g. "
+            "the machine's LAN IP -- an ESP32 connects over WiFi to that address, "
+            "not localhost, and some TLS clients reject a cert whose SAN doesn't "
+            "cover the address actually dialed"
+        ),
+    )
     args = parser.parse_args()
 
     out = os.path.abspath(args.out)
@@ -123,8 +138,10 @@ def main() -> None:
     write_pem(os.path.join(out, "ca.key.pem"), pem_private_key(ca_key))
     write_pem(os.path.join(out, "ca.crt.pem"), pem_cert(ca_cert))
 
-    # Server cert (for broker) - include localhost and 127.0.0.1
-    server_san = ["localhost", "127.0.0.1"]
+    # Server cert (for broker) - include localhost, 127.0.0.1, and any extra
+    # LAN-reachable addresses passed via --server-san (see its help text above).
+    extra_san = [s.strip() for s in args.server_san.split(",") if s.strip()]
+    server_san = ["localhost", "127.0.0.1", *extra_san]
     srv_key, srv_cert = gen_cert_signed(
         "chemsentry-mosquitto", server_san, ca_key, ca_cert
     )

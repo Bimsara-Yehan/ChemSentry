@@ -178,10 +178,23 @@ function App() {
     setActiveTab('live');
   };
 
+  // Poll while a tab is actually visible, rather than push/WebSocket -- there's
+  // no server-side push infrastructure here, and 5s (matching the ESP32's own
+  // publish interval) is frequent enough that a real reading never waits more
+  // than one cycle to appear, without hammering the API when nobody's looking.
   useEffect(() => {
-    if (token && activeTab === 'supervisor') {
-      refreshAlerts(token);
-    }
+    if (!token || activeTab !== 'live') return undefined;
+    refreshZones(token);
+    const interval = setInterval(() => refreshZones(token), 5000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, activeTab]);
+
+  useEffect(() => {
+    if (!token || activeTab !== 'supervisor') return undefined;
+    refreshAlerts(token);
+    const interval = setInterval(() => refreshAlerts(token), 5000);
+    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, activeTab]);
 
@@ -314,7 +327,13 @@ function App() {
           <div className="main-content">
             <div className="card">
               <div className="card-header">
-                <div className="card-title">Zone Telemetry</div>
+                <div className="card-title">
+                  Zone Telemetry
+                  <span className="status-badge" style={{ marginLeft: '10px' }}>
+                    <span className="pulse-dot"></span>
+                    Live
+                  </span>
+                </div>
                 <div className="zone-selector">
                   {Object.keys(ZONE_LABELS).map((z) => (
                     <button
