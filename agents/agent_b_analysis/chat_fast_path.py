@@ -1,16 +1,21 @@
 """Rule-based chat fast path for chemical safety queries (M3, Lab 06B).
 
-High-speed keyword and regex pattern matching to identify standard query
-patterns before they reach the LLM.  When a pattern is recognised the
-fast path does NOT fabricate a threshold value -- it explicitly returns
-UNKNOWN with an explanation directing the caller to perform proper corpus
-retrieval via CorpusRetriever.
+STATUS: PROTOTYPE / GATED COMPONENT
+-----------------------------------
+This module contains an experimental, rule-based query classifier designed to
+rapidly route common physical-hazard queries before invoking heavier NLP or LLM
+orchestration. It is intentionally excluded from public package exports in
+`agents/agent_b_analysis/__init__.py` and disconnected from production API
+routes (api/main.py) to prevent unprovenanced safety assertions from being exposed
+to end users.
 
-Safety principle: the fast path is only a router.  It MUST NOT claim a
-threshold is "safe" or "unsafe" without a ProvenancedThreshold from a
-versioned SDS document.  Returning UNKNOWN here is correct: the caller
-can follow up with CorpusRetriever.get_thresholds() → DeterministicSafetyEvaluator
-to get an evidence-based SAFE or WARNING result.
+Safety Principle & Invariants:
+------------------------------
+The fast path acts solely as a structural query classifier/router. Under NO
+circumstances does it generate fabricated thresholds or claim a chemical reading
+is SAFE or WARNING. When a query pattern matches, it yields an UNKNOWN state
+with explicit instructions directing the consumer to execute the full retrieval
+and evaluation pipeline (CorpusRetriever -> DeterministicSafetyEvaluator).
 """
 
 import re
@@ -21,8 +26,8 @@ class ChatFastPath:
     """Fast-path rule-based query router for chemical safety queries (Lab 06B).
 
     Recognises common query patterns and returns UNKNOWN with a routing hint
-    instead of a fabricated threshold claim.  Callers must invoke the full
-    CorpusRetriever → DeterministicSafetyEvaluator pipeline to obtain a cited
+    instead of a fabricated threshold claim. Callers must invoke the full
+    CorpusRetriever -> DeterministicSafetyEvaluator pipeline to obtain a cited
     SAFE or WARNING result.
     """
 
@@ -48,11 +53,15 @@ class ChatFastPath:
     def match_fast_path(self, query_text: str) -> tuple[bool, str | None]:
         """Attempt fast-path pattern matching for a user safety query.
 
-        When a known pattern is detected, returns UNKNOWN with a routing
-        message.  The caller is expected to hand off to CorpusRetriever
-        for evidence-based evaluation.  If no pattern matches, returns
-        (False, None) so the caller can fall through to the LLM or return
-        its own UNKNOWN response.
+        Problem this solves:
+            Fast-tracks identification of high-frequency physical property queries
+            (e.g., flash point, flammability, storage temperature) without incurring
+            LLM parsing latency.
+
+        Why this technique:
+            Compiled regex heuristics match canonical inquiry phrasing in sub-millisecond
+            time while strictly adhering to safety principles by returning an UNKNOWN
+            classification rather than ungrounded numerical guesses.
 
         Args:
             query_text: Raw user query text.
