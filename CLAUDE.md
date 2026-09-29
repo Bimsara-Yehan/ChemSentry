@@ -36,7 +36,7 @@ Sensors (MQTT) → Agent C (env monitor, NO chemical knowledge)
   when evidence is missing or conflicting — return UNKNOWN instead.
 
 ## Tech stack
-- Python 3.11, FastAPI + Pydantic, MCP Python SDK for agent-to-agent calls
+- Python 3.11, FastAPI + Pydantic (in-process typed schemas for agent protocols, see ADR 0005)
 - Retrieval: hand-built inverted/positional index (Lab 03), hand-built k-gram + `nltk`
   edit_distance (Lab 04), `sklearn.TfidfVectorizer` + cosine (Lab 05), hand-built index
   elimination (Lab 06A)

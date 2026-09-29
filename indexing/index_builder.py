@@ -14,9 +14,9 @@ Usage:
 
 from __future__ import annotations
 
+from agents.agent_a_retrieval.kgram_index import KGramIndex
 from extraction.models import ProcessedDocument
 from indexing.inverted_index import InvertedIndex
-from indexing.kgram_index import KGramIndex
 from indexing.positional_index import PositionalIndex
 from preprocessing.pipeline import preprocess
 
@@ -66,8 +66,7 @@ def build_all_indexes(
         positional.add_document(doc_id, tokens)
 
     # Build k-gram index from the combined vocabulary of the inverted index.
-    kgram = KGramIndex(k=3)
-    kgram.build(inverted.vocabulary)
+    kgram = KGramIndex(sorted(inverted.vocabulary), k=3)
 
     return inverted, positional, kgram
 
@@ -105,5 +104,4 @@ def add_document_to_indexes(
 
     # Add any new terms to the k-gram index.
     for token in set(doc.tokens):
-        if token not in kgram.vocabulary:
-            kgram.add_term(token)
+        kgram.add_term(token)

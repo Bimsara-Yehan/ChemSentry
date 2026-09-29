@@ -3,6 +3,8 @@
 *.db
 # Per-machine dev key for encryption at rest (api/crypto.py) -- never commit
 .chemsentry_data.key
+# Per-machine dev key for JWT signing (api/security.py) -- never commit
+.chemsentry_jwt.key
 
 
 # --- Python ---

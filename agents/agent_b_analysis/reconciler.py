@@ -1,13 +1,16 @@
 """Evidence Reconciler -- version comparison, Jaccard conflict detection, authority hierarchy (M3)."""
 
 from agents.protocols.schemas import ProvenancedThreshold
+from safety.reconciliation_policy import (
+    CONFLICT_TOLERANCE_PCT,
+    get_conflict_tolerance_pct,
+    get_hazard_jaccard_threshold,
+)
 
-# NOTE: reconciliation-policy default, not a per-chemical safety threshold -- this
-# gates how much numeric variance across equal-authority sources is tolerated before
-# forcing UNKNOWN. Tracked as a known gap: should ultimately be sourced from a
-# versioned governance document like every other safety-relevant number, once a
-# config-retrieval subsystem exists for it.
-DEFAULT_CONFLICT_TOLERANCE_PCT = 5.0
+# Backward-compatible alias (callers that still reference DEFAULT_CONFLICT_TOLERANCE_PCT
+# continue to work; see safety/reconciliation_policy.py for the authoritative value,
+# rationale, and version).
+DEFAULT_CONFLICT_TOLERANCE_PCT: float = CONFLICT_TOLERANCE_PCT
 
 
 class EvidenceReconciler:
@@ -27,13 +30,18 @@ class EvidenceReconciler:
         self,
         hazards_doc_a: set[str],
         hazards_doc_b: set[str],
-        min_jaccard_threshold: float = 0.6,
+        min_jaccard_threshold: float | None = None,
     ) -> tuple[bool, float, str]:
         """Detect conflict between hazard statement sets from two supplier SDS documents.
 
         Returns:
             Tuple of (has_conflict: bool, similarity_score: float, explanation: str)
         """
+        threshold = (
+            min_jaccard_threshold
+            if min_jaccard_threshold is not None
+            else get_hazard_jaccard_threshold()
+        )
         if not hazards_doc_a and not hazards_doc_b:
             return (
                 True,
@@ -42,12 +50,12 @@ class EvidenceReconciler:
             )
 
         sim_score = self.jaccard_similarity(hazards_doc_a, hazards_doc_b)
-        has_conflict = sim_score < min_jaccard_threshold
+        has_conflict = sim_score < threshold
 
         if has_conflict:
             explanation = (
                 f"Hazard statements conflict between supplier sources "
-                f"(Jaccard similarity = {sim_score:.2f} < threshold {min_jaccard_threshold:.2f})."
+                f"(Jaccard similarity = {sim_score:.2f} < threshold {threshold:.2f})."
             )
         else:
             explanation = (
@@ -59,7 +67,7 @@ class EvidenceReconciler:
     def select_authoritative_threshold(
         self,
         thresholds: list[ProvenancedThreshold],
-        conflict_tolerance_pct: float = DEFAULT_CONFLICT_TOLERANCE_PCT,
+        conflict_tolerance_pct: float | None = None,
     ) -> tuple[ProvenancedThreshold | None, list[str]]:
         """Select the single most authoritative threshold from a list of retrieved supplier thresholds.
 
@@ -67,6 +75,11 @@ class EvidenceReconciler:
         the first two) are checked for value variance beyond `conflict_tolerance_pct`;
         an unresolvable conflict returns (None, audit_notes) instead of guessing.
         """
+        tolerance = (
+            conflict_tolerance_pct
+            if conflict_tolerance_pct is not None
+            else get_conflict_tolerance_pct()
+        )
         if not thresholds:
             raise ValueError("Cannot reconcile empty list of thresholds")
 
@@ -82,14 +95,14 @@ class EvidenceReconciler:
             reference = max(abs(v) for v in values)
             variance_pct = (value_range / reference * 100.0) if reference > 0 else 0.0
 
-            if variance_pct > conflict_tolerance_pct:
+            if variance_pct > tolerance:
                 names = ", ".join(
                     f"{t.supplier_name}={t.value}{t.unit}" for t in top_group
                 )
                 return None, [
                     (
                         f"Conflict: {len(top_group)} equal-authority sources (score={max_authority}) diverge "
-                        f"beyond {conflict_tolerance_pct:.1f}% tolerance ({names}; variance={variance_pct:.1f}%)."
+                        f"beyond {tolerance:.1f}% tolerance ({names}; variance={variance_pct:.1f}%)."
                     )
                 ]
 

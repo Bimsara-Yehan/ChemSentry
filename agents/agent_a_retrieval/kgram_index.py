@@ -63,3 +63,16 @@ class KGramIndex:
             )
             if count >= min_overlap
         ]
+
+    def add_term(self, term: str) -> None:
+        """Add a single term and its k-grams to the existing index.
+
+        Problem this solves: Allows incremental indexing when documents or vocabulary
+        terms are added dynamically without rebuilding the entire index.
+        Why this technique: Directly updates the vocabulary list and posting sets
+        for each k-gram with O(L) complexity where L is term length.
+        """
+        if term not in self.vocabulary:
+            self.vocabulary.append(term)
+        for gram in get_kgrams(term, self.k):
+            self._index[gram].add(term)
