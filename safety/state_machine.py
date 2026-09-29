@@ -44,7 +44,16 @@ class DeterministicSafetyEvaluator:
         hazard_jaccard_threshold: Optional[float] = None,
         policy_version: Optional[str] = None,
     ) -> None:
-        """Initialize evaluator with acceptable percentage tolerance for supplier variance."""
+        """Initialize evaluator with versioned policy parameters.
+
+        Problem this solves:
+            Configures the deterministic evaluator with governance thresholds and
+            provenance versioning loaded from the active reconciliation policy.
+
+        Why this technique:
+            Defaulting to policy getters ensures no hardcoded numbers are baked
+            into code while permitting parameter injection for test isolation.
+        """
         from agents.agent_b_analysis.reconciler import EvidenceReconciler
 
         self.conflict_tolerance_pct = (
@@ -68,6 +77,15 @@ class DeterministicSafetyEvaluator:
         thresholds: List[ProvenancedThreshold],
     ) -> SafetyEvaluationResult:
         """Evaluate a single sensor reading against retrieved SDS thresholds.
+
+        Problem this solves:
+            Provides a deterministic, verifiable safety verdict (SAFE / WARNING / UNKNOWN)
+            without LLM non-determinism, backed by explicit citations and policy provenance.
+
+        Why this technique:
+            Executes a multi-stage deterministic state machine (empty check -> hazard
+            conflict -> supplier reconciliation -> unit validation -> directional threshold
+            comparison) ensuring zero hallucinations on the safety-critical path.
 
         Returns:
             SafetyEvaluationResult with state SAFE, WARNING, or UNKNOWN,
@@ -157,7 +175,16 @@ class DeterministicSafetyEvaluator:
     def _unknown_result(
         self, request: SafetyEvaluationRequest, reason: str
     ) -> SafetyEvaluationResult:
-        """Build the UNKNOWN-state result shared by every early-exit path in evaluate()."""
+        """Build the UNKNOWN-state result shared by every early-exit path in evaluate().
+
+        Problem this solves:
+            Standardizes UNKNOWN result construction with consistent audit metadata
+            and policy version tags across all evaluation guardrails.
+
+        Why this technique:
+            Central helper prevents duplicate object construction and guarantees
+            policy version is threaded into every early-exit explanation.
+        """
         return SafetyEvaluationResult(
             state=SafetyState.UNKNOWN,
             chemical_name=request.chemical_name,
@@ -172,7 +199,15 @@ class DeterministicSafetyEvaluator:
     def _detect_hazard_conflicts(
         self, thresholds: List[ProvenancedThreshold]
     ) -> Optional[str]:
-        """Pairwise-check hazard statement sets across sources that provided any."""
+        """Pairwise-check hazard statement sets across sources that provided any.
+
+        Problem this solves:
+            Identifies conflicting hazard classifications across all supplied SDS documents.
+
+        Why this technique:
+            Performs exhaustive pairwise Jaccard comparison using the configured
+            policy threshold to catch any cross-supplier hazard contradictions.
+        """
         sources = [t for t in thresholds if t.hazard_statements]
         for i in range(len(sources)):
             for j in range(i + 1, len(sources)):
@@ -194,7 +229,16 @@ class DeterministicSafetyEvaluator:
     def _reconcile_thresholds(
         self, thresholds: List[ProvenancedThreshold]
     ) -> tuple[Optional[ProvenancedThreshold], Optional[str]]:
-        """Select highest authority threshold or flag unresolvable supplier conflicts."""
+        """Select highest authority threshold or flag unresolvable supplier conflicts.
+
+        Problem this solves:
+            Extracts the authoritative threshold or detects unresolvable variance among
+            top-tier sources.
+
+        Why this technique:
+            Delegates to EvidenceReconciler to maintain a single source of truth for
+            authority ranking and percentage variance calculations.
+        """
         if len(thresholds) == 1:
             return thresholds[0], None
 

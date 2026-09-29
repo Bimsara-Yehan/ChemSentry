@@ -20,6 +20,14 @@ class EvidenceReconciler:
     def jaccard_similarity(set_a: set[str], set_b: set[str]) -> float:
         """Calculate Jaccard similarity coefficient between two token/hazard sets.
 
+        Problem this solves:
+            Quantifies overlap between GHS hazard statements across suppliers to
+            detect contradictory classifications without assuming exact set equality.
+
+        Why this technique:
+            Jaccard coefficient |A ∩ B| / |A ∪ B| is invariant to set size asymmetry
+            and provides a bounded [0, 1] metric directly tunable via policy.
+
         Formula: J(A, B) = |A ∩ B| / |A ∪ B|
         """
         if not set_a and not set_b:
@@ -33,6 +41,15 @@ class EvidenceReconciler:
         min_jaccard_threshold: float | None = None,
     ) -> tuple[bool, float, str]:
         """Detect conflict between hazard statement sets from two supplier SDS documents.
+
+        Problem this solves:
+            Flags unresolvable discrepancies in GHS hazard classifications across suppliers
+            before numerical threshold evaluation occurs.
+
+        Why this technique:
+            Compares Jaccard similarity against the versioned policy threshold
+            retrieved from safety/reconciliation_policy.json, forcing UNKNOWN when
+            suppliers disagree on fundamental chemical hazards.
 
         Returns:
             Tuple of (has_conflict: bool, similarity_score: float, explanation: str)
@@ -70,6 +87,16 @@ class EvidenceReconciler:
         conflict_tolerance_pct: float | None = None,
     ) -> tuple[ProvenancedThreshold | None, list[str]]:
         """Select the single most authoritative threshold from a list of retrieved supplier thresholds.
+
+        Problem this solves:
+            Resolves multiple candidate thresholds from different suppliers using
+            a tiered authority hierarchy, while preventing silent selection when equal-authority
+            sources disagree beyond acceptable tolerance.
+
+        Why this technique:
+            Sorts by authority score and calculates relative percentage variance across
+            all top-tier candidates against the versioned policy tolerance from
+            safety/reconciliation_policy.json.
 
         If more than one source shares the top authority score, all of them (not just
         the first two) are checked for value variance beyond `conflict_tolerance_pct`;
