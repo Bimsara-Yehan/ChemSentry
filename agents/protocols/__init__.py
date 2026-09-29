@@ -1,4 +1,4 @@
-"""MCP tool schema definitions shared across agents."""
+"""Typed protocol schema definitions shared across agents in-process (see ADR 0005)."""
 
 from agents.protocols.schemas import (
     ProvenancedThreshold,
