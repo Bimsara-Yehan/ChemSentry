@@ -37,6 +37,11 @@ corpus/raw/*
 firmware/certs/*
 !firmware/certs/.gitkeep
 !firmware/certs/README.md
+# WiFi credentials + embedded TLS material for the ESP32 build -- see
+# firmware/src/secrets.example.h for the template.
+firmware/src/secrets.h
+# PlatformIO build output (compiled binaries, per-machine build cache)
+firmware/.pio/
 
 # --- OS ---
 .DS_Store
