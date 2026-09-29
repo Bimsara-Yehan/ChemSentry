@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "effective_date": "2026-09-24",
+  "conflict_tolerance_pct": 5.0,
+  "hazard_jaccard_threshold": 0.6,
+  "citation": "ChemSentry Reconciliation Policy v1.0.0 (safety/reconciliation_policy.json, 2026-09-24)",
+  "rationale": "5 % numeric tolerance for equal-authority supplier variance is consistent with GHS guidance that rounding differences below 5 % do not change hazard category for most physical-hazard thresholds. 0.6 Jaccard for hazard-statement agreement requires that the majority of GHS hazard codes overlap between suppliers before treating their data as consistent; a completely different hazard profile (e.g., one SDS lists H225+H302, another lists H400+H410) would score well below 0.6 and correctly force UNKNOWN.",
+  "source": "ChemSentry M3 Internal Governance Review",
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-09-24",
+      "description": "Initial extraction from hardcoded module-level constants in reconciler.py and state_machine.py into this versioned JSON governance document."
+    }
+  ]
+}

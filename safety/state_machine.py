@@ -8,10 +8,6 @@ in deciding the safety state.
 
 from typing import List, Optional
 
-from agents.agent_b_analysis.reconciler import (
-    DEFAULT_CONFLICT_TOLERANCE_PCT,
-    EvidenceReconciler,
-)
 from agents.protocols.schemas import (
     ProvenancedThreshold,
     SafetyEvaluationRequest,
@@ -19,11 +15,18 @@ from agents.protocols.schemas import (
     SafetyState,
     ThresholdDirection,
 )
+from safety.reconciliation_policy import (
+    CONFLICT_TOLERANCE_PCT,
+    HAZARD_JACCARD_THRESHOLD,
+    get_conflict_tolerance_pct,
+    get_hazard_jaccard_threshold,
+    get_policy_version,
+)
 
-# NOTE: reconciliation-policy default, not a per-chemical safety threshold -- see
-# agents/agent_b_analysis/reconciler.py for why this is a tracked gap rather than a
-# fully versioned/cited value.
-DEFAULT_HAZARD_JACCARD_THRESHOLD = 0.6
+# Backward-compatible aliases; see safety/reconciliation_policy.py for the
+# authoritative value, rationale, and governance changelog.
+DEFAULT_CONFLICT_TOLERANCE_PCT: float = CONFLICT_TOLERANCE_PCT
+DEFAULT_HAZARD_JACCARD_THRESHOLD: float = HAZARD_JACCARD_THRESHOLD
 
 
 class DeterministicSafetyEvaluator:
@@ -37,12 +40,26 @@ class DeterministicSafetyEvaluator:
 
     def __init__(
         self,
-        conflict_tolerance_pct: float = DEFAULT_CONFLICT_TOLERANCE_PCT,
-        hazard_jaccard_threshold: float = DEFAULT_HAZARD_JACCARD_THRESHOLD,
+        conflict_tolerance_pct: Optional[float] = None,
+        hazard_jaccard_threshold: Optional[float] = None,
+        policy_version: Optional[str] = None,
     ) -> None:
         """Initialize evaluator with acceptable percentage tolerance for supplier variance."""
-        self.conflict_tolerance_pct = conflict_tolerance_pct
-        self.hazard_jaccard_threshold = hazard_jaccard_threshold
+        from agents.agent_b_analysis.reconciler import EvidenceReconciler
+
+        self.conflict_tolerance_pct = (
+            conflict_tolerance_pct
+            if conflict_tolerance_pct is not None
+            else get_conflict_tolerance_pct()
+        )
+        self.hazard_jaccard_threshold = (
+            hazard_jaccard_threshold
+            if hazard_jaccard_threshold is not None
+            else get_hazard_jaccard_threshold()
+        )
+        self.policy_version = (
+            policy_version if policy_version is not None else get_policy_version()
+        )
         self._reconciler = EvidenceReconciler()
 
     def evaluate(
@@ -115,14 +132,14 @@ class DeterministicSafetyEvaluator:
             reasoning = (
                 f"WARNING: Current {request.metric_name} ({request.current_value} {request.unit}) "
                 f"{unsafe_phrase} retrieved SDS safety threshold ({target_threshold} {reconciled_threshold.unit}). "
-                f"Source: {reconciled_threshold.citation}"
+                f"Source: {reconciled_threshold.citation} [policy_version={self.policy_version}]"
             )
         else:
             state = SafetyState.SAFE
             reasoning = (
                 f"SAFE: Current {request.metric_name} ({request.current_value} {request.unit}) "
                 f"{safe_phrase} retrieved SDS safety threshold ({target_threshold} {reconciled_threshold.unit}). "
-                f"Source: {reconciled_threshold.citation}"
+                f"Source: {reconciled_threshold.citation} [policy_version={self.policy_version}]"
             )
 
         return SafetyEvaluationResult(
@@ -149,7 +166,7 @@ class DeterministicSafetyEvaluator:
             current_value=request.current_value,
             unit=request.unit,
             provenance=None,
-            reasoning=f"UNKNOWN: {reason}",
+            reasoning=f"UNKNOWN: {reason} [policy_version={self.policy_version}]",
         )
 
     def _detect_hazard_conflicts(
