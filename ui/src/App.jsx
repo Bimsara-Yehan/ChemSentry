@@ -213,6 +213,9 @@ function App() {
   const [activeTab, setActiveTab] = useState('live');
   const [activeZone, setActiveZone] = useState('Zone_A');
 
+  // Role-to-landing-tab mapping (UI only — no logic change)
+  const ROLE_DEFAULT_TAB = { viewer: 'live', analyst: 'reconciliation', admin: 'supervisor' };
+
   const [zones, setZones] = useState({});
   const [zonesError, setZonesError] = useState('');
   const [telemetryLoading, setTelemetryLoading] = useState(false);
@@ -256,6 +259,8 @@ function App() {
       const user = await getMe(access_token);
       setToken(access_token);
       setCurrentUser(user);
+      // Set landing tab based on role (UI only)
+      setActiveTab(ROLE_DEFAULT_TAB[user?.role] || 'live');
       await refreshZones(access_token);
     } catch (err) {
       setLoginError(err.message);
@@ -270,6 +275,28 @@ function App() {
     setZones({});
     setAlerts([]);
     setActiveTab('live');
+  };
+
+  // Role welcome widget config (UI only)
+  const ROLE_WELCOME = {
+    viewer: {
+      icon: '👁️',
+      title: `Welcome, ${currentUser?.username} — Monitoring View`,
+      desc: 'You have read-only access. Live zone telemetry and alert history are visible. Submitting readings or queries requires an Analyst account.',
+      badge: 'Read-Only',
+    },
+    analyst: {
+      icon: '🔬',
+      title: `Welcome, ${currentUser?.username} — Analyst Workspace`,
+      desc: 'Submit telemetry readings, run SDS evidence queries, and inspect retrieval provenance. Alert sign-off requires Admin approval.',
+      badge: 'Analyst',
+    },
+    admin: {
+      icon: '🛡️',
+      title: `Welcome, ${currentUser?.username} — Administrator Console`,
+      desc: 'Full system access. Review and sign off excursion alerts, submit readings, and query the SDS evidence database.',
+      badge: 'Admin',
+    },
   };
 
   // Poll while a tab is actually visible
@@ -358,9 +385,11 @@ function App() {
   const pendingAlertCount = alerts.filter((a) => a.status === 'pending_review').length;
   const isViewer = currentUser?.role === 'viewer';
   const isAdmin = currentUser?.role === 'admin';
+  const roleClass = `role-${currentUser?.role}`; // drives per-role CSS theming
+  const welcomeInfo = ROLE_WELCOME[currentUser?.role];
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${roleClass}`}>
       {/* Top Application Header */}
       <header className="app-header">
         <div className="brand-section">
@@ -405,21 +434,30 @@ function App() {
           <Icons.Search />
           Retrieval &amp; Reconciliation
         </button>
-        <button
-          className={`tab-btn ${activeTab === 'supervisor' ? 'active' : ''}`}
-          onClick={() => setActiveTab('supervisor')}
-        >
-          <Icons.AlertTriangle />
-          Sign-Off Queue
-          {pendingAlertCount > 0 && <span className="tab-count">{pendingAlertCount}</span>}
-        </button>
+        {/* Sign-Off tab visible only to Analyst and Admin */}
+        {!isViewer && (
+          <button
+            className={`tab-btn ${activeTab === 'supervisor' ? 'active' : ''}`}
+            onClick={() => setActiveTab('supervisor')}
+          >
+            <Icons.AlertTriangle />
+            Sign-Off Queue
+            {pendingAlertCount > 0 && <span className="tab-count">{pendingAlertCount}</span>}
+          </button>
+        )}
       </nav>
 
-      {/* Role Access Banner */}
-      <div className={`role-banner role-banner-${currentUser?.role}`}>
-        <span className="role-banner-label">{ROLE_INFO[currentUser?.role]?.label}</span>
-        <span className="role-banner-detail">{ROLE_INFO[currentUser?.role]?.detail}</span>
-      </div>
+      {/* Role Welcome Widget — replaces old plain banner */}
+      {welcomeInfo && (
+        <div className="role-welcome-widget">
+          <span className="role-welcome-icon">{welcomeInfo.icon}</span>
+          <div className="role-welcome-text">
+            <strong>{welcomeInfo.title}</strong>
+            <p>{welcomeInfo.desc}</p>
+          </div>
+          <span className="role-welcome-badge">{welcomeInfo.badge}</span>
+        </div>
+      )}
 
       {/* Tab 1: Live Environment View */}
       {activeTab === 'live' && (
@@ -595,8 +633,7 @@ function App() {
 
       {/* Tab 2: SDS Retrieval & Reconciliation View */}
       {activeTab === 'reconciliation' && (
-        <div className="dashboard-grid">
-          <div className="main-content">
+        <div className="main-content" style={{ maxWidth: '100%' }}>
             <div className="card">
               <div className="card-title" style={{ marginBottom: '8px' }}>
                 <Icons.Search />
@@ -704,27 +741,6 @@ function App() {
                 ))}
               </div>
             )}
-          </div>
-
-          {/* Right Info Sidebar */}
-          <div className="side-content">
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px' }}>
-                IR Pipeline Architecture
-              </div>
-              <div style={{ fontSize: '12.5px', color: 'var(--text-muted)', lineHeight: '1.7' }}>
-                <p style={{ marginBottom: '10px' }}>
-                  ChemSentry uses classical Information Retrieval without vector databases or LLM safety decisions:
-                </p>
-                <ul style={{ paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <li><strong>Positional Inverted Index:</strong> Word &amp; CAS mapping</li>
-                  <li><strong>Tolerant Matching:</strong> k-grams + Levenshtein</li>
-                  <li><strong>Passage Ranking:</strong> TF-IDF cosine similarity</li>
-                  <li><strong>Reconciliation:</strong> Jaccard conflict analysis</li>
-                </ul>
-              </div>
-            </div>
-          </div>
         </div>
       )}
 
@@ -832,7 +848,7 @@ function App() {
                         onChange={(e) => setSignOffNote(e.target.value)}
                         style={{ flex: 1, minWidth: '200px' }}
                       />
-                      <button className="action-btn" onClick={() => handleSignOff(alert.alert_id, true)}>
+                      <button className="action-btn btn-signoff-approve" onClick={() => handleSignOff(alert.alert_id, true)}>
                         <Icons.CheckCircle /> Approve Alert
                       </button>
                       <button

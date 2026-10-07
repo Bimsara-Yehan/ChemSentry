@@ -50,6 +50,11 @@
   --purple-tint: rgba(139, 92, 246, 0.12);
   --purple-border: rgba(139, 92, 246, 0.3);
 
+  /* Gold accent (admin secondary) */
+  --gold-accent: #F59E0B;
+  --gold-tint: rgba(245, 158, 11, 0.12);
+  --gold-border: rgba(245, 158, 11, 0.3);
+
   /* Radius & Elevation */
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -57,6 +62,205 @@
   --radius-pill: 9999px;
   --shadow-card: 0 4px 20px -2px rgba(0, 0, 0, 0.4), 0 2px 6px -1px rgba(0, 0, 0, 0.2);
   --shadow-glow: 0 0 25px rgba(14, 165, 233, 0.15);
+}
+
+/* ============================================================================
+   Role-Specific Theme Overrides
+   Applied via class on .app-container — no logic changes required
+   ============================================================================ */
+
+/* VIEWER  — Emerald / read-only calm green */
+.role-viewer {
+  --accent: #10B981;
+  --accent-hover: #059669;
+  --accent-tint: rgba(16, 185, 129, 0.12);
+  --accent-border: rgba(16, 185, 129, 0.3);
+  --border-focus: #10B981;
+  --shadow-glow: 0 0 25px rgba(16, 185, 129, 0.15);
+}
+
+.role-viewer body,
+.role-viewer {
+  background-image:
+    radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.06) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.03) 0px, transparent 50%);
+}
+
+.role-viewer .brand-logo-icon {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.4);
+}
+
+.role-viewer .tab-btn.active {
+  color: #10B981;
+  border-color: rgba(16, 185, 129, 0.3);
+  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.15);
+}
+
+.role-viewer .action-btn {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.25);
+}
+
+.role-viewer .action-btn:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
+}
+
+.role-viewer .zone-chip.active {
+  color: #10B981;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.role-viewer .input-field:focus {
+  border-color: #10B981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}
+
+.role-viewer .demo-chip:hover {
+  color: #10B981;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+/* ANALYST — Sky Cyan (default — no override needed, matches :root) */
+.role-analyst {
+  /* Uses the default :root cyan accent — intentionally left as-is */
+}
+
+/* ADMIN — Deep Purple + Gold highlights */
+.role-admin {
+  --accent: #8B5CF6;
+  --accent-hover: #7C3AED;
+  --accent-tint: rgba(139, 92, 246, 0.12);
+  --accent-border: rgba(139, 92, 246, 0.3);
+  --border-focus: #8B5CF6;
+  --shadow-glow: 0 0 25px rgba(139, 92, 246, 0.15);
+}
+
+.role-admin .brand-logo-icon {
+  background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%);
+  box-shadow: 0 0 16px rgba(139, 92, 246, 0.5);
+}
+
+.role-admin body,
+.role-admin {
+  background-image:
+    radial-gradient(at 0% 0%, rgba(139, 92, 246, 0.07) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(245, 158, 11, 0.05) 0px, transparent 50%);
+}
+
+.role-admin .tab-btn.active {
+  color: #8B5CF6;
+  border-color: rgba(139, 92, 246, 0.3);
+  box-shadow: 0 2px 10px rgba(139, 92, 246, 0.2);
+}
+
+.role-admin .action-btn {
+  background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%);
+  box-shadow: 0 2px 10px rgba(139, 92, 246, 0.3);
+}
+
+.role-admin .action-btn:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.45);
+}
+
+.role-admin .zone-chip.active {
+  color: #8B5CF6;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.role-admin .input-field:focus {
+  border-color: #8B5CF6;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
+}
+
+.role-admin .demo-chip:hover {
+  color: #8B5CF6;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+/* Admin gold highlight on primary action button in sign-off queue */
+.role-admin .btn-signoff-approve {
+  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.3);
+}
+
+.role-admin .btn-signoff-approve:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.45);
+}
+
+/* ============================================================================
+   Role Welcome Widget (shown at top of main content area, per role)
+   ============================================================================ */
+.role-welcome-widget {
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+  position: relative;
+  overflow: hidden;
+  animation: slideInDown 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideInDown {
+  from { opacity: 0; transform: translateY(-12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.role-welcome-widget::before {
+  content: '';
+  position: absolute;
+  right: -40px;
+  top: -40px;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: var(--accent-tint);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.role-welcome-icon {
+  font-size: 30px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.role-welcome-text {
+  flex: 1;
+}
+
+.role-welcome-text strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 3px;
+}
+
+.role-welcome-text p {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.role-welcome-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-tint);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* Reset & Root Setup */
