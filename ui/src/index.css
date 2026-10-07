@@ -81,11 +81,12 @@ body {
 }
 
 #root {
-  max-width: 1320px;
-  margin: 0 auto;
-  padding: 24px 20px 60px;
+  max-width: 100%;
+  margin: 0;
+  padding: 20px 32px 60px;
   width: 100%;
 }
+
 
 /* Header */
 .app-header {
@@ -336,15 +337,23 @@ body {
 /* Grid Layouts */
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 2.2fr 1fr;
+  grid-template-columns: 1fr 380px;
   gap: 24px;
+  width: 100%;
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1200px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr 320px;
+  }
+}
+
+@media (max-width: 960px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
 }
+
 
 /* Card Component */
 .card {
