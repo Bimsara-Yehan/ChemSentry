@@ -214,3 +214,67 @@ class AuditLog(BaseModel):
     timestamp: datetime
     resource: str  # What was acted on (alert_id, query_id, etc)
     details: dict  # Additional context
+
+
+# ============================================================================
+# User Management (Item 1 — admin-created accounts, POST /users)
+# ============================================================================
+
+
+class CreateUserRequest(BaseModel):
+    """Admin request to create a new real user account."""
+
+    username: str = Field(..., min_length=3, max_length=64)
+    password: str = Field(..., min_length=8, max_length=128)
+    role: UserRole
+
+
+class UserResponse(BaseModel):
+    """Public shape of a user record — never exposes password_hash."""
+
+    user_id: str
+    username: str
+    role: UserRole
+    is_active: bool
+    created_at: Optional[datetime] = None
+
+
+# ============================================================================
+# Zone Management (Item 2 — admin-only zone/chemical CRUD)
+# ============================================================================
+
+
+class CreateZoneRequest(BaseModel):
+    """Admin request to create a new monitored zone."""
+
+    zone_id: str = Field(..., min_length=1, max_length=64)
+    chemicals: list[str] = Field(default_factory=list)
+
+
+class AddChemicalRequest(BaseModel):
+    """Admin request to add a chemical to an existing zone's inventory."""
+
+    chemical_name: str = Field(..., min_length=1, max_length=128)
+
+
+# ============================================================================
+# Audit Log Viewing (Item 3 — GET /audit-log, admin-only)
+# ============================================================================
+
+
+class AuditLogEntry(BaseModel):
+    """One row from the audit_log table, returned by GET /audit-log."""
+
+    id: int
+    action: str
+    user_id: str  # decrypted automatically by EncryptedText column type
+    resource: str
+    details: dict  # decrypted automatically by EncryptedJSON column type
+    timestamp: datetime
+
+
+class AuditLogResponse(BaseModel):
+    """Response envelope for GET /audit-log."""
+
+    entries: list[AuditLogEntry]
+    total: int

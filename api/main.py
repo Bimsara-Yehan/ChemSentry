@@ -47,9 +47,20 @@ from api.database import (
 # defined in the same module as AlertRecord, so importing that already
 # registers it -- but seed_default_zone_inventory() below is what actually
 # populates it.)
-from api.db_models import AlertRecord, AuditLogRecord, next_alert_id
+from api.db_models import (
+    AlertRecord,
+    AuditLogRecord,
+    UserRecord,
+    next_alert_id,
+    next_user_id,
+)
 from api.models import (
+    AddChemicalRequest,
+    AuditLogEntry,
+    AuditLogResponse,
     ChemicalCheckOut,
+    CreateUserRequest,
+    CreateZoneRequest,
     HealthCheck,
     QueryRequest,
     QueryResponse,
@@ -57,6 +68,7 @@ from api.models import (
     TokenResponse,
     UserInfo,
     UserLogin,
+    UserResponse,
     UserRole,
     ZoneStatusResponse,
 )
@@ -247,7 +259,7 @@ async def startup_event():
 
 
 @app.post("/auth/login", response_model=TokenResponse)
-async def login(credentials: UserLogin):
+async def login(credentials: UserLogin, db: Session = Depends(get_db)):
     """Login with username/password, receive JWT token.
 
     Demo users (for testing):
@@ -255,7 +267,7 @@ async def login(credentials: UserLogin):
     - analyst_user / analyst123 (ANALYST role)
     - admin_user / admin123 (ADMIN role)
     """
-    result = authenticate_user(credentials.username, credentials.password)
+    result = authenticate_user(credentials.username, credentials.password, db=db)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -564,6 +576,240 @@ async def sign_off_alert(
     db.refresh(alert)
 
     return {"status": "sign_off_recorded", "alert": alert.to_dict()}
+
+
+# ============================================================================
+# User Management Routes (Item 1)
+# ============================================================================
+
+
+@app.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    payload: CreateUserRequest,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Create a new real user account (ADMIN only).
+
+    The three demo accounts (viewer_user, analyst_user, admin_user) continue to
+    work as a fallback via api/security.py's _get_demo_users() even after real
+    accounts exist -- the login route checks the DB first, then demo fallback.
+    """
+    existing = (
+        db.query(UserRecord).filter(UserRecord.username == payload.username).first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Username '{payload.username}' is already taken.",
+        )
+
+    from api.security import (
+        hash_password,  # already imported at module level via authenticate_user
+    )
+
+    user_id = next_user_id(db)
+    new_user = UserRecord(
+        user_id=user_id,
+        username=payload.username,
+        password_hash=hash_password(payload.password),
+        role=payload.role.value,
+        is_active=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return UserResponse(**new_user.to_dict())
+
+
+@app.get("/users", response_model=list[UserResponse])
+async def list_users(
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """List all real user accounts (ADMIN only). Does not include demo fallback accounts."""
+    users = db.query(UserRecord).order_by(UserRecord.id).all()
+    return [UserResponse(**u.to_dict()) for u in users]
+
+
+# ============================================================================
+# Zone Management Routes (Item 2)
+# ============================================================================
+
+
+@app.post("/zones", status_code=status.HTTP_201_CREATED)
+async def create_zone(
+    payload: CreateZoneRequest,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Create a new monitored zone and optionally seed its chemical inventory (ADMIN only).
+
+    After creation:
+    - The zone appears immediately in GET /zones (seeded with an ambient reading).
+    - Chemical additions are reflected in Agent C's in-memory zone_inventory dict.
+    """
+    if payload.zone_id in zone_inventory:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Zone '{payload.zone_id}' already exists.",
+        )
+
+    # Persist to DB
+    for chemical_name in payload.chemicals:
+        from api.db_models import ZoneInventoryRecord  # noqa: PLC0415
+
+        db.add(
+            ZoneInventoryRecord(zone_id=payload.zone_id, chemical_name=chemical_name)
+        )
+    db.commit()
+
+    # Update in-memory inventory so GET /zones sees the new zone immediately
+    zone_inventory[payload.zone_id] = list(payload.chemicals)
+
+    # Seed an ambient reading so _zone_status_response() doesn't KeyError
+    monitor = _get_environmental_monitor()
+    reading = SensorReading(
+        zone_id=payload.zone_id,
+        temperature_celsius=20.0,
+        humidity_percent=45.0,
+        timestamp=datetime.now(timezone.utc),
+        device_id="zone-create-default",
+    )
+    _LATEST_ZONE_EVALUATIONS[payload.zone_id] = monitor.handle_reading(reading)
+
+    return {
+        "zone_id": payload.zone_id,
+        "chemicals": zone_inventory[payload.zone_id],
+        "status": "created",
+    }
+
+
+@app.post("/zones/{zone_id}/chemicals", status_code=status.HTTP_201_CREATED)
+async def add_chemical_to_zone(
+    zone_id: str,
+    payload: AddChemicalRequest,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Add a chemical to an existing zone's inventory (ADMIN only).
+
+    Updates both the DB (ZoneInventoryRecord) and the live in-memory
+    zone_inventory dict so the change is immediately visible to Agent C
+    without a server restart.
+    """
+    if zone_id not in zone_inventory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Zone '{zone_id}' not found.",
+        )
+    if payload.chemical_name in zone_inventory[zone_id]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{payload.chemical_name}' is already in zone '{zone_id}'.",
+        )
+
+    from api.db_models import ZoneInventoryRecord  # noqa: PLC0415
+
+    db.add(ZoneInventoryRecord(zone_id=zone_id, chemical_name=payload.chemical_name))
+    db.commit()
+
+    zone_inventory[zone_id].append(payload.chemical_name)
+
+    return {
+        "zone_id": zone_id,
+        "chemicals": zone_inventory[zone_id],
+        "status": "chemical_added",
+    }
+
+
+@app.delete(
+    "/zones/{zone_id}/chemicals/{chemical_name}", status_code=status.HTTP_200_OK
+)
+async def remove_chemical_from_zone(
+    zone_id: str,
+    chemical_name: str,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Remove a chemical from a zone's inventory (ADMIN only).
+
+    Deletes the matching ZoneInventoryRecord row and updates the in-memory
+    zone_inventory dict immediately.
+    """
+    if zone_id not in zone_inventory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Zone '{zone_id}' not found.",
+        )
+    if chemical_name not in zone_inventory[zone_id]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"'{chemical_name}' is not in zone '{zone_id}'.",
+        )
+
+    from api.db_models import ZoneInventoryRecord  # noqa: PLC0415
+
+    row = (
+        db.query(ZoneInventoryRecord)
+        .filter(
+            ZoneInventoryRecord.zone_id == zone_id,
+            ZoneInventoryRecord.chemical_name == chemical_name,
+        )
+        .first()
+    )
+    if row:
+        db.delete(row)
+        db.commit()
+
+    zone_inventory[zone_id].remove(chemical_name)
+
+    return {
+        "zone_id": zone_id,
+        "chemicals": zone_inventory[zone_id],
+        "status": "chemical_removed",
+    }
+
+
+# ============================================================================
+# Audit Log Route (Item 3)
+# ============================================================================
+
+
+@app.get("/audit-log", response_model=AuditLogResponse)
+async def get_audit_log(
+    limit: int = 100,
+    offset: int = 0,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Return the audit log, newest-first, paginated (ADMIN only).
+
+    EncryptedText/EncryptedJSON columns (user_id, details) decrypt automatically
+    when SQLAlchemy reads them -- no crypto.py calls needed here.
+    `limit` and `offset` allow basic pagination from the UI.
+    """
+    total = db.query(AuditLogRecord).count()
+    rows = (
+        db.query(AuditLogRecord)
+        .order_by(AuditLogRecord.id.desc())  # newest-first
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    entries = [
+        AuditLogEntry(
+            id=row.id,
+            action=row.action,
+            user_id=row.user_id,
+            resource=row.resource,
+            details=row.details,
+            timestamp=row.timestamp,
+        )
+        for row in rows
+    ]
+    return AuditLogResponse(entries=entries, total=total)
 
 
 # ============================================================================

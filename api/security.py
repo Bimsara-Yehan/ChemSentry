@@ -336,20 +336,51 @@ def _get_demo_users():
     return _DEMO_USERS_CACHE
 
 
-def authenticate_user(username: str, password: str) -> Optional[tuple[str, UserRole]]:
-    """Authenticate user by username/password (demo only).
+def authenticate_user(
+    username: str,
+    password: str,
+    db=None,
+) -> Optional[tuple[str, UserRole]]:
+    """Authenticate by username/password.
 
-    In production, this would query a user database.
+    Resolution order (DB-first, demo-fallback):
+    1. If `db` is supplied, look for a matching active row in the `users` table.
+       This path is taken by the real /auth/login route once UserRecord rows exist.
+    2. Fall back to the three hardcoded demo accounts (_get_demo_users()) so that
+       a fresh clone with an empty users table, and docs/user-guide.md's documented
+       credentials, both keep working without any manual seeding step.
 
     Returns:
-        (user_id, role) if authenticated, None otherwise
+        (user_id, role) tuple if authenticated, None otherwise.
     """
+    # DB path -- only if a session is provided and the table exists
+    if db is not None:
+        try:
+            # Import here to avoid circular import at module level
+            from api.db_models import UserRecord  # noqa: PLC0415
+
+            db_user = (
+                db.query(UserRecord)
+                .filter(
+                    UserRecord.username == username,
+                    UserRecord.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+            if db_user is not None:
+                if not verify_password(password, db_user.password_hash):
+                    return None
+                return db_user.user_id, UserRole(db_user.role)
+        except Exception as exc:  # table may not exist on very first run
+            logger.debug(
+                "DB user lookup skipped (%s), falling back to demo users.", exc
+            )
+
+    # Demo fallback
     demo_users = _get_demo_users()
     if username not in demo_users:
         return None
-
     user = demo_users[username]
     if not verify_password(password, user["password"]):
         return None
-
     return user["user_id"], user["role"]

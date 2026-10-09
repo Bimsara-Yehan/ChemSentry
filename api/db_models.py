@@ -15,7 +15,7 @@ registered on `Base.metadata`), which `api/main.py` does at import time.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped
 
 from api.crypto import EncryptedJSON, EncryptedText
@@ -131,3 +131,54 @@ class ZoneInventoryRecord(Base):
     id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
     zone_id: Mapped[str] = Column(String, nullable=False, index=True)
     chemical_name: Mapped[str] = Column(String, nullable=False)
+
+
+class UserRecord(Base):
+    """Real user accounts, admin-created only (Item 1 of M4 backlog).
+
+    The three demo accounts in api/security.py's _get_demo_users() remain as
+    a hard fallback so existing login flows and docs/user-guide.md's documented
+    demo credentials keep working even on a fresh clone with an empty users table.
+    authenticate_user() (security.py) checks this table first; demo accounts only
+    apply when no matching row is found here.
+
+    Encryption at rest (ADR 0004, api/crypto.py): password_hash is encrypted via
+    EncryptedText -- same pattern as AlertRecord.reasoning/created_by.
+    username, role, is_active, created_at stay plaintext: they are queried,
+    filtered and sorted; ciphertext with a random IV can never match an equality
+    filter. (A real deployment covers those columns at the DB/volume level.)
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = Column(String, unique=True, nullable=False, index=True)
+    username: Mapped[str] = Column(String, unique=True, nullable=False, index=True)
+    password_hash: Mapped[str] = Column(EncryptedText, nullable=False)
+    role: Mapped[str] = Column(String, nullable=False)  # "viewer"|"analyst"|"admin"
+    is_active: Mapped[bool] = Column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    def to_dict(self) -> dict:
+        """Serialise to a safe public shape — never includes password_hash."""
+        return {
+            "user_id": self.user_id,
+            "username": self.username,
+            "role": self.role,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+def next_user_id(db) -> str:
+    """Generate the next sequential user_id (USR_0001, USR_0002, ...).
+
+    Same simple count-based scheme as next_alert_id() -- adequate for a
+    single-process demo; not safe under concurrent writers.
+    Starts from 4 to avoid colliding with the three hardcoded demo user_ids
+    (user_001, user_002, user_003).
+    """
+    count = db.query(UserRecord).count()
+    return f"USR_{count + 4:04d}"

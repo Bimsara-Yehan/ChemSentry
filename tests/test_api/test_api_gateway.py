@@ -397,3 +397,109 @@ def test_submit_zone_telemetry_rejected_for_viewer():
     }
     response = client.post("/zones/Zone_C/telemetry", json=payload, headers=headers)
     assert response.status_code == 403
+
+
+# ============================================================================
+# User Management Tests (PR 1 Item 1)
+# ============================================================================
+
+
+def _admin_headers():
+    login_res = client.post(
+        "/auth/login", json={"username": "admin_user", "password": "admin123"}
+    )
+    token = login_res.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_create_user_and_login():
+    """Verify admin can create a real DB user and that user can log in."""
+    headers = _admin_headers()
+    payload = {
+        "username": "new_lab_tech",
+        "password": "techpassword123",
+        "role": "analyst",
+    }
+    create_res = client.post("/users", json=payload, headers=headers)
+    assert create_res.status_code == 201
+    user_data = create_res.json()
+    assert user_data["username"] == "new_lab_tech"
+    assert user_data["role"] == "analyst"
+    assert user_data["is_active"] is True
+
+    # Try logging in as the newly created user
+    login_res = client.post(
+        "/auth/login",
+        json={"username": "new_lab_tech", "password": "techpassword123"},
+    )
+    assert login_res.status_code == 200
+    assert "access_token" in login_res.json()
+
+    # List users and verify new_lab_tech is present
+    list_res = client.get("/users", headers=headers)
+    assert list_res.status_code == 200
+    usernames = [u["username"] for u in list_res.json()]
+    assert "new_lab_tech" in usernames
+
+
+def test_create_user_rbac_restriction():
+    """Verify non-admin cannot create users."""
+    login_res = client.post(
+        "/auth/login", json={"username": "analyst_user", "password": "analyst123"}
+    )
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+    payload = {
+        "username": "unauthorized_user",
+        "password": "password123",
+        "role": "viewer",
+    }
+    res = client.post("/users", json=payload, headers=headers)
+    assert res.status_code == 403
+
+
+# ============================================================================
+# Zone Management Tests (PR 1 Item 2)
+# ============================================================================
+
+
+def test_zone_management_crud():
+    """Verify zone creation, adding chemicals, and removing chemicals."""
+    headers = _admin_headers()
+
+    # Create new zone
+    zone_payload = {"zone_id": "Zone_Test", "chemicals": ["Ethanol"]}
+    create_res = client.post("/zones", json=zone_payload, headers=headers)
+    assert create_res.status_code == 201
+    assert create_res.json()["zone_id"] == "Zone_Test"
+    assert "Ethanol" in create_res.json()["chemicals"]
+
+    # Add chemical to zone
+    add_chem_res = client.post(
+        "/zones/Zone_Test/chemicals",
+        json={"chemical_name": "Acetone"},
+        headers=headers,
+    )
+    assert add_chem_res.status_code == 201
+    assert "Acetone" in add_chem_res.json()["chemicals"]
+
+    # Remove chemical from zone
+    del_chem_res = client.delete("/zones/Zone_Test/chemicals/Ethanol", headers=headers)
+    assert del_chem_res.status_code == 200
+    assert "Ethanol" not in del_chem_res.json()["chemicals"]
+    assert "Acetone" in del_chem_res.json()["chemicals"]
+
+
+# ============================================================================
+# Audit Log Tests (PR 1 Item 3)
+# ============================================================================
+
+
+def test_get_audit_log_endpoint():
+    """Verify audit log endpoint returns entries and pagination info for ADMIN."""
+    headers = _admin_headers()
+    res = client.get("/audit-log?limit=10&offset=0", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert "entries" in data
+    assert "total" in data
+    assert isinstance(data["entries"], list)
