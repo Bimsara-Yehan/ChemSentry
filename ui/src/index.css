@@ -125,11 +125,34 @@ body {
   font-weight: 600;
 }
 
+/* Reflects GET /health's real status, not a hardcoded "online" label --
+   degraded (DB or broker unreachable) and down (API unreachable) reuse the
+   same amber/red tokens the rest of the app uses for WARNING/danger states. */
+.status-badge.is-degraded {
+  background: var(--amber-tint);
+  border-color: var(--amber-border);
+  color: var(--amber-warning);
+}
+
+.status-badge.is-down {
+  background: var(--red-tint);
+  border-color: var(--red-border);
+  color: var(--red-danger);
+}
+
 .pulse-dot {
   width: 6px;
   height: 6px;
   background-color: var(--green-safe);
   border-radius: 50%;
+}
+
+.status-badge.is-degraded .pulse-dot {
+  background-color: var(--amber-warning);
+}
+
+.status-badge.is-down .pulse-dot {
+  background-color: var(--red-danger);
 }
 
 .user-chip {
@@ -181,6 +204,11 @@ body {
   gap: 4px;
   margin-bottom: 24px;
   border-bottom: 1px solid var(--border-color);
+  /* At phone width, three labels incl. "Retrieval & Reconciliation" don't
+     fit one row -- scroll horizontally rather than wrap, since a wrapped
+     second row would break the shared bottom-border/underline styling
+     below. */
+  overflow-x: auto;
 }
 
 .tab-btn {
@@ -197,6 +225,8 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
   transition: color 0.15s ease, border-color 0.15s ease;
 }
 
@@ -226,6 +256,50 @@ body {
 
 /* Role banner -- makes the current permission tier obvious on every tab,
    instead of only showing up as scattered disabled buttons. */
+.new-alert-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--amber-border);
+  background: var(--amber-tint);
+  color: var(--text-main);
+  font-size: 13.5px;
+  margin-bottom: 20px;
+}
+
+.new-alert-toast-view {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--amber-border);
+  color: var(--amber-warning);
+  font-weight: 600;
+  font-size: 12.5px;
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.new-alert-toast-view:hover {
+  background: var(--bg-card);
+}
+
+.new-alert-toast-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.new-alert-toast-dismiss:hover {
+  color: var(--text-main);
+}
+
 .role-banner {
   display: flex;
   align-items: baseline;
@@ -573,4 +647,35 @@ body {
   font-size: 13.5px;
   padding: 24px 0;
   text-align: center;
+}
+
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  padding: 24px 0;
+}
+
+.loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-spinner {
+    animation: none;
+  }
 }

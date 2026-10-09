@@ -151,6 +151,13 @@ export async function removeChemicalFromZone(token, zoneId, chemicalName) {
   }
 }
 
+// No auth header -- GET /health takes no `user` dependency in api/main.py,
+// matching its job as an unauthenticated liveness check.
+export async function getHealth() {
+  const res = await client.get('/health');
+  return res.data;
+}
+
 export async function getAuditLog(token, limit = 50, offset = 0) {
   try {
     const res = await client.get('/audit-log', {
