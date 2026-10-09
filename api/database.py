@@ -4,6 +4,7 @@ Connects to PostgreSQL and provides a database session for all API routes.
 """
 
 import os
+import socket
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
@@ -83,6 +84,31 @@ def check_db_health() -> str:
             conn.execute(text("SELECT 1"))
             return "ok"
     except Exception as e:
+        return f"error: {str(e)}"
+
+
+def check_mqtt_broker_health(timeout_seconds: float = 2.0) -> str:
+    """Check if the MQTT broker's TLS port is actually reachable.
+
+    Problem this solves: GET /health previously hardcoded mqtt_broker to "ok"
+    unconditionally -- the same kind of fake status the UI's "System Online"
+    badge had, just one layer down. A bare TCP connect attempt (no TLS
+    handshake, no MQTT CONNECT) is enough to prove "something is listening on
+    this port" without this process needing to hold a persistent MQTT client
+    or a device certificate just to answer a health check.
+
+    Why a raw socket connect and not a real MQTT client: a full paho-mqtt
+    client needs a client cert (mutual TLS, mosquitto.conf's
+    require_certificate true) and would need to stay connected or reconnect
+    on every health check -- real cost and real complexity for a check whose
+    only job is "is the broker process up and accepting connections."
+    """
+    host = os.getenv("MQTT_HOST", "localhost")
+    port = int(os.getenv("MQTT_PORT", "8883"))
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return "ok"
+    except OSError as e:
         return f"error: {str(e)}"
 
 
