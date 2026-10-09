@@ -91,3 +91,75 @@ export async function signOffAlert(token, alertId, approved, notes) {
     unwrap(err);
   }
 }
+
+export async function createUser(token, username, password, role) {
+  try {
+    const res = await client.post(
+      '/users',
+      { username, password, role },
+      { headers: authHeader(token) }
+    );
+    return res.data;
+  } catch (err) {
+    unwrap(err);
+  }
+}
+
+export async function listUsers(token) {
+  try {
+    const res = await client.get('/users', { headers: authHeader(token) });
+    return res.data;
+  } catch (err) {
+    unwrap(err);
+  }
+}
+
+export async function createZone(token, zoneId, chemicals = []) {
+  try {
+    const res = await client.post(
+      '/zones',
+      { zone_id: zoneId, chemicals },
+      { headers: authHeader(token) }
+    );
+    return res.data;
+  } catch (err) {
+    unwrap(err);
+  }
+}
+
+export async function addChemicalToZone(token, zoneId, chemicalName) {
+  try {
+    const res = await client.post(
+      `/zones/${zoneId}/chemicals`,
+      { chemical_name: chemicalName },
+      { headers: authHeader(token) }
+    );
+    return res.data;
+  } catch (err) {
+    unwrap(err);
+  }
+}
+
+export async function removeChemicalFromZone(token, zoneId, chemicalName) {
+  try {
+    const res = await client.delete(`/zones/${zoneId}/chemicals/${chemicalName}`, {
+      headers: authHeader(token),
+    });
+    return res.data;
+  } catch (err) {
+    unwrap(err);
+  }
+}
+
+export async function getAuditLog(token, limit = 50, offset = 0) {
+  try {
+    const res = await client.get('/audit-log', {
+      params: { limit, offset },
+      headers: authHeader(token),
+    });
+    return res.data;
+  } catch (err) {
+    unwrap(err);
+  }
+}
+

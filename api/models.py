@@ -356,3 +356,57 @@ class OpenQueryResponse(BaseModel):
     query: str
     response: str
     tools_registered: list[str]
+
+
+# ============================================================================
+# Admin Management Endpoints (M4)
+# ============================================================================
+
+
+class CreateUserRequest(BaseModel):
+    """Request body for POST /users."""
+
+    username: str
+    password: str
+    role: UserRole = UserRole.ANALYST
+
+
+class UserResponse(BaseModel):
+    """Response body for user objects."""
+
+    user_id: str
+    username: str
+    role: str
+    is_active: bool
+    created_at: Optional[str] = None
+
+
+class CreateZoneRequest(BaseModel):
+    """Request body for POST /zones."""
+
+    zone_id: str
+    chemicals: list[str] = []
+
+
+class AddChemicalRequest(BaseModel):
+    """Request body for POST /zones/{zone_id}/chemicals."""
+
+    chemical_name: str
+
+
+class AuditLogEntry(BaseModel):
+    """One record in the compliance audit log."""
+
+    id: int
+    action: str
+    user_id: str
+    resource: str
+    details: dict
+    timestamp: datetime
+
+
+class AuditLogResponse(BaseModel):
+    """Response for GET /audit-log."""
+
+    entries: list[AuditLogEntry]
+    total: int

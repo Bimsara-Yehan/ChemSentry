@@ -1,11 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import './index.css';
 import {
+  addChemicalToZone,
+  createZone,
+  createUser,
+  getAuditLog,
   getMe,
   listAlerts,
+  listUsers,
   listZones,
   login as apiLogin,
   queryChemical,
+  removeChemicalFromZone,
   signOffAlert,
   submitZoneTelemetry,
 } from './api';
@@ -132,6 +138,27 @@ function App() {
   const [alertsError, setAlertsError] = useState('');
   const [signOffNote, setSignOffNote] = useState('');
 
+  // Admin User Management State
+  const [users, setUsers] = useState([]);
+  const [usersError, setUsersError] = useState('');
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState('analyst');
+  const [userCreateSuccess, setUserCreateSuccess] = useState('');
+
+  // Admin Zone Management State
+  const [newZoneId, setNewZoneId] = useState('');
+  const [newZoneChems, setNewZoneChems] = useState('');
+  const [addChemName, setAddChemName] = useState('');
+  const [selectedZoneForChem, setSelectedZoneForChem] = useState('Zone_A');
+  const [zoneManageSuccess, setZoneManageSuccess] = useState('');
+
+  // Admin Audit Log State
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditOffset, setAuditOffset] = useState(0);
+  const [auditError, setAuditError] = useState('');
+
   const refreshZones = async (authToken) => {
     try {
       const zoneList = await listZones(authToken);
@@ -151,6 +178,28 @@ function App() {
       setAlertsError('');
     } catch (err) {
       setAlertsError(err.message);
+    }
+  };
+
+  const refreshUsers = async (authToken) => {
+    try {
+      const list = await listUsers(authToken);
+      setUsers(list || []);
+      setUsersError('');
+    } catch (err) {
+      setUsersError(err.message);
+    }
+  };
+
+  const refreshAuditLogs = async (authToken, offset = 0) => {
+    try {
+      const res = await getAuditLog(authToken, 25, offset);
+      setAuditLogs(res?.entries || []);
+      setAuditTotal(res?.total || 0);
+      setAuditOffset(offset);
+      setAuditError('');
+    } catch (err) {
+      setAuditError(err.message);
     }
   };
 
@@ -242,6 +291,64 @@ function App() {
     }
   };
 
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    setUserCreateSuccess('');
+    setUsersError('');
+    try {
+      const res = await createUser(token, newUsername, newPassword, newUserRole);
+      setUserCreateSuccess(`User '${res.username}' (${res.role}) created successfully.`);
+      setNewUsername('');
+      setNewPassword('');
+      await refreshUsers(token);
+    } catch (err) {
+      setUsersError(err.message);
+    }
+  };
+
+  const handleCreateZone = async (e) => {
+    e.preventDefault();
+    setZoneManageSuccess('');
+    setZonesError('');
+    try {
+      const chems = newZoneChems.split(',').map((c) => c.trim()).filter(Boolean);
+      await createZone(token, newZoneId, chems);
+      setZoneManageSuccess(`Zone '${newZoneId}' created successfully.`);
+      setNewZoneId('');
+      setNewZoneChems('');
+      await refreshZones(token);
+    } catch (err) {
+      setZonesError(err.message);
+    }
+  };
+
+  const handleAddChemical = async (e) => {
+    e.preventDefault();
+    if (!selectedZoneForChem) return;
+    setZoneManageSuccess('');
+    setZonesError('');
+    try {
+      await addChemicalToZone(token, selectedZoneForChem, addChemName);
+      setZoneManageSuccess(`Chemical '${addChemName}' added to ${selectedZoneForChem}.`);
+      setAddChemName('');
+      await refreshZones(token);
+    } catch (err) {
+      setZonesError(err.message);
+    }
+  };
+
+  const handleRemoveChemical = async (zoneId, chemName) => {
+    setZoneManageSuccess('');
+    setZonesError('');
+    try {
+      await removeChemicalFromZone(token, zoneId, chemName);
+      setZoneManageSuccess(`Chemical '${chemName}' removed from ${zoneId}.`);
+      await refreshZones(token);
+    } catch (err) {
+      setZonesError(err.message);
+    }
+  };
+
   if (!token) {
     return (
       <div className="app-container">
@@ -314,6 +421,37 @@ function App() {
           Sign-Off Queue
           {pendingAlertCount > 0 && <span className="tab-count">{pendingAlertCount}</span>}
         </button>
+        {isAdmin && (
+          <>
+            <button
+              className={`tab-btn ${activeTab === 'users' ? 'active' : ''}`}
+              onClick={() => {
+                setActiveTab('users');
+                refreshUsers(token);
+              }}
+            >
+              User Management
+            </button>
+            <button
+              className={`tab-btn ${activeTab === 'zones' ? 'active' : ''}`}
+              onClick={() => {
+                setActiveTab('zones');
+                refreshZones(token);
+              }}
+            >
+              Zone Inventory
+            </button>
+            <button
+              className={`tab-btn ${activeTab === 'audit' ? 'active' : ''}`}
+              onClick={() => {
+                setActiveTab('audit');
+                refreshAuditLogs(token, 0);
+              }}
+            >
+              Audit Trail
+            </button>
+          </>
+        )}
       </nav>
 
       <div className={`role-banner role-banner-${currentUser?.role}`}>
@@ -680,8 +818,343 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Tab 4: User Management (ADMIN only) */}
+      {activeTab === 'users' && isAdmin && (
+        <div className="dashboard-grid">
+          <div className="main-content">
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">User Accounts Directory</div>
+                <button
+                  className="demo-chip"
+                  onClick={() => refreshUsers(token)}
+                >
+                  Refresh Directory
+                </button>
+              </div>
+
+              {usersError && (
+                <div className="provenance-box is-error">
+                  <div className="provenance-title">Error loading users</div>
+                  {usersError}
+                </div>
+              )}
+
+              <div className="inventory-list" style={{ marginTop: '16px' }}>
+                {users.length === 0 && !usersError && (
+                  <p className="empty-state">No DB-backed user accounts registered yet. Demo accounts (viewer_user, analyst_user, admin_user) are active via fallback.</p>
+                )}
+                {users.map((u) => (
+                  <div key={u.user_id} className="inventory-item">
+                    <div>
+                      <strong style={{ fontSize: '15px', color: 'var(--text-main)' }}>
+                        {u.username}
+                      </strong>
+                      <span className="role-tag" style={{ marginLeft: '10px' }}>
+                        {u.role.toUpperCase()}
+                      </span>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        ID: {u.user_id} • Created: {new Date(u.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        padding: '3px 8px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        backgroundColor: u.is_active ? 'var(--green-tint)' : 'var(--red-tint)',
+                        color: u.is_active ? 'var(--green-safe)' : 'var(--red-danger)',
+                        border: `1px solid ${u.is_active ? 'var(--green-border)' : 'var(--red-border)'}`,
+                      }}
+                    >
+                      {u.is_active ? 'ACTIVE' : 'INACTIVE'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="side-content">
+            <div className="card">
+              <div className="card-title" style={{ marginBottom: '16px' }}>
+                Register New User
+              </div>
+
+              <form onSubmit={handleCreateUser} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Username
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. jsmith"
+                    value={newUsername}
+                    onChange={(e) => setNewUsername(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    className="input-field"
+                    placeholder="••••••••"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Role Assignment
+                  </label>
+                  <select
+                    className="input-field"
+                    value={newUserRole}
+                    onChange={(e) => setNewUserRole(e.target.value)}
+                  >
+                    <option value="viewer">Viewer (Read-only)</option>
+                    <option value="analyst">Analyst (Telemetry &amp; Queries)</option>
+                    <option value="admin">Admin (Full Control &amp; Sign-offs)</option>
+                  </select>
+                </div>
+
+                <button type="submit" className="action-btn" style={{ marginTop: '8px' }}>
+                  Create Account
+                </button>
+              </form>
+
+              {userCreateSuccess && (
+                <div className="provenance-box" style={{ marginTop: '16px', borderColor: 'var(--green-border)', background: 'var(--green-tint)', color: 'var(--green-safe)' }}>
+                  <div className="provenance-title">Success</div>
+                  {userCreateSuccess}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 5: Zone Inventory Management (ADMIN only) */}
+      {activeTab === 'zones' && isAdmin && (
+        <div className="dashboard-grid">
+          <div className="main-content">
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Zone Chemical Inventories</div>
+                <button className="demo-chip" onClick={() => refreshZones(token)}>
+                  Refresh Zones
+                </button>
+              </div>
+
+              {zoneManageSuccess && (
+                <div className="provenance-box" style={{ marginBottom: '16px', borderColor: 'var(--green-border)', background: 'var(--green-tint)', color: 'var(--green-safe)' }}>
+                  <div className="provenance-title">Success</div>
+                  {zoneManageSuccess}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+                {Object.entries(zones).map(([zId, zData]) => (
+                  <div key={zId} className="card" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-color)' }}>
+                    <div className="card-header">
+                      <div>
+                        <strong style={{ fontSize: '15px', color: 'var(--text-main)' }}>
+                          {zId}
+                        </strong>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                          ({(zData.chemicals || []).length} chemicals)
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="inventory-list" style={{ marginTop: '10px' }}>
+                      {(zData.chemicals || []).map((chem) => (
+                        <div key={chem} className="inventory-item">
+                          <span style={{ fontWeight: 500 }}>{chem}</span>
+                          <button
+                            className="logout-btn"
+                            style={{ color: 'var(--red-danger)', borderColor: 'var(--red-border)' }}
+                            onClick={() => handleRemoveChemical(zId, chem)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="side-content" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div className="card">
+              <div className="card-title" style={{ marginBottom: '12px' }}>
+                Add Chemical to Zone
+              </div>
+
+              <form onSubmit={handleAddChemical} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Target Zone
+                  </label>
+                  <select
+                    className="input-field"
+                    value={selectedZoneForChem}
+                    onChange={(e) => setSelectedZoneForChem(e.target.value)}
+                  >
+                    {Object.keys(zones).map((zId) => (
+                      <option key={zId} value={zId}>
+                        {zId}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Chemical Name
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. Isopropanol"
+                    value={addChemName}
+                    onChange={(e) => setAddChemName(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <button type="submit" className="action-btn">
+                  Add to Inventory
+                </button>
+              </form>
+            </div>
+
+            <div className="card">
+              <div className="card-title" style={{ marginBottom: '12px' }}>
+                Create Monitored Zone
+              </div>
+
+              <form onSubmit={handleCreateZone} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Zone ID
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. Zone_D"
+                    value={newZoneId}
+                    onChange={(e) => setNewZoneId(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Initial Chemicals (Comma-separated)
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. Acetone, Methanol"
+                    value={newZoneChems}
+                    onChange={(e) => setNewZoneChems(e.target.value)}
+                  />
+                </div>
+
+                <button type="submit" className="action-btn">
+                  Create Zone
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 6: Compliance Audit Trail (ADMIN only) */}
+      {activeTab === 'audit' && isAdmin && (
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">System Audit Trail</div>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                Security log of system actions and sign-offs (Total entries: {auditTotal}).
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                className="demo-chip"
+                disabled={auditOffset === 0}
+                onClick={() => refreshAuditLogs(token, Math.max(0, auditOffset - 25))}
+              >
+                Previous
+              </button>
+              <button
+                className="demo-chip"
+                disabled={auditOffset + 25 >= auditTotal}
+                onClick={() => refreshAuditLogs(token, auditOffset + 25)}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+
+          {auditError && (
+            <div className="provenance-box is-error">
+              <div className="provenance-title">Failed to load audit logs</div>
+              {auditError}
+            </div>
+          )}
+
+          <div className="inventory-list" style={{ marginTop: '16px' }}>
+            {auditLogs.length === 0 && !auditError && (
+              <p className="empty-state">No audit log entries recorded yet.</p>
+            )}
+            {auditLogs.map((log) => (
+              <div key={log.id} className="inventory-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="role-tag" style={{ fontSize: '11px' }}>
+                      #{log.id}
+                    </span>
+                    <strong style={{ fontSize: '14px', color: 'var(--text-main)' }}>
+                      {log.action}
+                    </strong>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      by {log.user_id}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
+                    {new Date(log.timestamp).toLocaleString()}
+                  </span>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  <strong>Resource:</strong> {log.resource || 'N/A'}
+                  {log.details && (
+                    <span style={{ marginLeft: '12px' }}>
+                      <strong>Details:</strong> {typeof log.details === 'object' ? JSON.stringify(log.details) : log.details}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 export default App;
+
