@@ -1,18 +1,37 @@
-"""API route tests for Agent B items wired in PR 1 (M3).
+"""API route tests for Agent B items wired in PR 1 & PR 2 (M3).
 
 Tests:
   - GET /zones/{zone_id}/co-storage-check  (Item 1: co-storage / CAMEO warnings)
   - POST /alerts/{alert_id}/narrate         (Item 2: plain-language safety card)
+  - POST /classifier/severity               (Item 3: hazard severity classifier)
 
 All tests use the shared TestClient from test_api_gateway.py which already
 sets up the fixture retriever and the isolated test database via conftest.py.
 """
 
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 import api.main as main
+from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
+from extraction.models import SDSMetadata
+from extraction.pipeline import extract_document
+
+# In standalone test runs, main.retriever is empty (corpus/raw/ is gitignored).
+# Seed a minimal fixture doc so /safety/evaluate can produce genuine WARNINGs for Toluene.
+if main.retriever is None or len(getattr(main.retriever, "documents", [])) == 0:
+    _toluene_doc = extract_document(
+        "SECTION 7: Handling and storage\nStore below 25 C.\n",
+        SDSMetadata(
+            document_id="TEST_TOL_001",
+            chemical_name="Toluene",
+            supplier="ABC Chemicals",
+            retrieval_date=date.today(),
+        ),
+    )
+    main.retriever = CorpusRetriever([_toluene_doc])
 
 # Reuse the TestClient bound to main.app -- conftest.py already redirected
 # DATABASE_URL to the temp SQLite file before this import happens.
@@ -255,3 +274,107 @@ def test_narrate_alert_with_language_calls_translate(mock_narrator_class):
         call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("language")
     )
     assert passed_lang == "si"
+
+
+# ---------------------------------------------------------------------------
+# Item 3 -- POST /classifier/severity
+# ---------------------------------------------------------------------------
+
+
+def test_classify_severity_returns_200_with_expected_fields():
+    """Valid severity classification request returns 200 with severity, confidence,
+    and the documented data gap note explaining that NFPA ratings are caller-supplied.
+    """
+    response = client.post(
+        "/classifier/severity",
+        json={
+            "chemical_name": "Ethanol",
+            "nfpa_health": 2,
+            "nfpa_flammability": 3,
+            "nfpa_instability": 0,
+            "ghs_code_count": 2,
+        },
+        headers=_analyst_token(),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["chemical_name"] == "Ethanol"
+    assert data["severity"] in ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    assert isinstance(data["confidence"], float)
+    assert 0.0 <= data["confidence"] <= 1.0
+    assert data["nfpa_health"] == 2
+    assert data["nfpa_flammability"] == 3
+    assert data["nfpa_instability"] == 0
+    assert data["ghs_code_count"] == 2
+    assert "caller-supplied" in data["note"]
+
+
+def test_classify_severity_predicts_critical_for_high_hazard_ratings():
+    """Extreme ratings (4/4/3 with 7 GHS codes) must classify as CRITICAL.
+
+    Validates that the classifier output aligns with the underlying decision tree model.
+    """
+    response = client.post(
+        "/classifier/severity",
+        json={
+            "chemical_name": "Nitroglycerin",
+            "nfpa_health": 4,
+            "nfpa_flammability": 4,
+            "nfpa_instability": 3,
+            "ghs_code_count": 7,
+        },
+        headers=_analyst_token(),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["severity"] == "CRITICAL"
+
+
+def test_classify_severity_requires_all_nfpa_fields_validation_error():
+    """Omitting NFPA fields must return 422 Unprocessable Entity.
+
+    Regression guard for the NFPA data gap decision: we explicitly chose option (b)
+    (caller-supplied required fields) rather than silently defaulting to 0, so that
+    the caller cannot unknowingly receive a severity label derived from fabricated zeros.
+    """
+    response = client.post(
+        "/classifier/severity",
+        json={
+            "chemical_name": "Ethanol",
+            "ghs_code_count": 2,
+        },
+        headers=_analyst_token(),
+    )
+    assert response.status_code == 422
+
+
+def test_classify_severity_accessible_to_viewer():
+    """Severity classification is a read-only calculation, accessible to VIEWER role."""
+    response = client.post(
+        "/classifier/severity",
+        json={
+            "chemical_name": "Water",
+            "nfpa_health": 0,
+            "nfpa_flammability": 0,
+            "nfpa_instability": 0,
+            "ghs_code_count": 0,
+        },
+        headers=_viewer_token(),
+    )
+    assert response.status_code == 200
+    assert response.json()["severity"] == "LOW"
+
+
+def test_classify_severity_requires_auth():
+    """Unauthenticated call to /classifier/severity must return 401."""
+    response = client.post(
+        "/classifier/severity",
+        json={
+            "chemical_name": "Ethanol",
+            "nfpa_health": 2,
+            "nfpa_flammability": 3,
+            "nfpa_instability": 0,
+            "ghs_code_count": 2,
+        },
+    )
+    assert response.status_code == 401

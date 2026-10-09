@@ -59,6 +59,8 @@ from api.models import (
     QueryRequest,
     QueryResponse,
     SensorReading,
+    SeverityRequest,
+    SeverityResponse,
     TokenResponse,
     UserInfo,
     UserLogin,
@@ -713,6 +715,69 @@ async def narrate_alert(
         safety_state=SafetyState.WARNING.value,
         explanation=explanation,
         translation=translation,
+    )
+
+
+# ============================================================================
+# Agent B — Hazard Severity Classifier Route (M3, PR 2)
+# ============================================================================
+
+
+@app.post("/classifier/severity", response_model=SeverityResponse)
+async def classify_severity(
+    req: SeverityRequest,
+    user: UserInfo = Depends(get_current_user),
+):
+    """Classify chemical hazard severity (LOW / MEDIUM / HIGH / CRITICAL).
+
+    Problem: HazardSeverityClassifier.predict_severity() existed and passed its own
+    tests but was unreachable from any API route (Lab 08 deliverable, M3).
+
+    NFPA data gap (decision documented here per the task spec): NFPA 704 diamond
+    ratings are NOT extracted anywhere in this codebase -- the real SDS corpus
+    (corpus/raw/) does not contain NFPA ratings in any parseable form, and
+    extraction/value_extractor.py has no NFPA parser. Option (b) was chosen over
+    option (a): rather than fabricating extraction logic that has no real source
+    data to operate on, the three NFPA inputs are explicitly parameterized as
+    caller-supplied. The SeverityRequest schema makes the gap visible (required
+    fields with descriptive validation messages; no silent zero-default); a caller
+    without real NFPA data will receive a 422 validation error, not a severity
+    label silently computed from made-up zeros.
+
+    ghs_code_count is the one feature the pipeline CAN derive from the real corpus:
+    len(ProvenancedThreshold.hazard_statements) on any threshold from /query.
+
+    This route does NOT set a SAFE/WARNING/UNKNOWN state -- it runs the Lab 08
+    classifier which labels severity for downstream triage. The deterministic
+    safety-state machine (safety/state_machine.py) remains the only path to
+    SAFE/WARNING/UNKNOWN.
+
+    Requires: any authenticated role (read-only classification, no data injection).
+    """
+    from agents.agent_b_analysis.classifier import HazardSeverityClassifier
+
+    classifier = HazardSeverityClassifier()
+    severity, confidence = classifier.predict_severity(
+        nfpa_health=req.nfpa_health,
+        nfpa_flammability=req.nfpa_flammability,
+        nfpa_instability=req.nfpa_instability,
+        ghs_code_count=req.ghs_code_count,
+    )
+
+    return SeverityResponse(
+        chemical_name=req.chemical_name,
+        severity=severity,
+        confidence=round(confidence, 4),
+        nfpa_health=req.nfpa_health,
+        nfpa_flammability=req.nfpa_flammability,
+        nfpa_instability=req.nfpa_instability,
+        ghs_code_count=req.ghs_code_count,
+        note=(
+            "NFPA 704 ratings (nfpa_health, nfpa_flammability, nfpa_instability) "
+            "are caller-supplied -- this pipeline does not extract NFPA ratings from "
+            "SDS documents. Only ghs_code_count is derivable from this corpus "
+            "(len(ProvenancedThreshold.hazard_statements) from /query or /safety/evaluate)."
+        ),
     )
 
 
