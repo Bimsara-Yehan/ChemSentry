@@ -327,3 +327,32 @@ class SeverityResponse(BaseModel):
     nfpa_instability: int
     ghs_code_count: int
     note: str  # explains that NFPA inputs are caller-supplied, not extracted
+
+
+# ============================================================================
+# Agent B — Open Query Orchestrator (M3, PR 3)
+# ============================================================================
+
+
+class OpenQueryRequest(BaseModel):
+    """Request body for POST /query/open.
+
+    Accepts natural language queries from safety officers, e.g.
+    'Why did Zone B flag a warning?' or 'What are the storage limits for Toluene?'
+    """
+
+    query: str = Field(
+        min_length=1, description="Open-ended natural language safety query"
+    )
+
+
+class OpenQueryResponse(BaseModel):
+    """Response from POST /query/open.
+
+    Returns the synthesized response coordinated by OpenQueryOrchestrator,
+    along with the list of tools that were registered and available to the LLM.
+    """
+
+    query: str
+    response: str
+    tools_registered: list[str]
