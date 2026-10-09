@@ -22,6 +22,16 @@ from sqlalchemy.orm import Session
 
 # Import Agent A retrieval, Agent B & Safety State Machine components
 from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
+
+# Importing these registers AlertRecord/AuditLogRecord/ZoneInventoryRecord on
+# Base.metadata before init_db() runs at startup -- without this import
+# having happened, Base.metadata.create_all() would silently create no
+# tables for them. (ZoneInventoryRecord itself is unused by name here --
+# defined in the same module as AlertRecord, so importing that already
+# registers it -- but seed_default_zone_inventory() below is what actually
+# populates it.)
+from agents.agent_b_analysis.apriori_discovery import CoStoragePatternMiner
+from agents.agent_b_analysis.llm_layer import SafetyCardNarrator
 from agents.agent_c_environment.monitor import EnvironmentalMonitor, ZoneEvaluation
 from agents.agent_c_environment.zone_inventory import (
     load_zone_inventory,
@@ -39,18 +49,13 @@ from api.database import (
     get_db_schema_info,
     init_db,
 )
-
-# Importing these registers AlertRecord/AuditLogRecord/ZoneInventoryRecord on
-# Base.metadata before init_db() runs at startup -- without this import
-# having happened, Base.metadata.create_all() would silently create no
-# tables for them. (ZoneInventoryRecord itself is unused by name here --
-# defined in the same module as AlertRecord, so importing that already
-# registers it -- but seed_default_zone_inventory() below is what actually
-# populates it.)
 from api.db_models import AlertRecord, AuditLogRecord, next_alert_id
 from api.models import (
     ChemicalCheckOut,
+    CoStorageCheckResponse,
+    CoStorageRule,
     HealthCheck,
+    NarrateAlertResponse,
     QueryRequest,
     QueryResponse,
     SensorReading,
@@ -564,6 +569,151 @@ async def sign_off_alert(
     db.refresh(alert)
 
     return {"status": "sign_off_recorded", "alert": alert.to_dict()}
+
+
+# ============================================================================
+# Agent B — Co-Storage & Narration Routes (M3, PR 1)
+# ============================================================================
+
+
+@app.get("/zones/{zone_id}/co-storage-check", response_model=CoStorageCheckResponse)
+async def co_storage_check(
+    zone_id: str,
+    user: UserInfo = Depends(get_current_user),
+):
+    """Mine co-storage association rules for a zone and flag CAMEO incompatibilities.
+
+    Problem: CoStoragePatternMiner.discover_co_storage_rules() existed and
+    passed its own tests but was unreachable from any API route. The zone_inventory
+    dict (already loaded at startup) is the exact transaction set Apriori needs --
+    each zone's chemical list IS one transaction.
+
+    Technique: Apriori over all-zone transactions, then CAMEO-matrix lookup per
+    discovered rule (see apriori_discovery.py). Returns rules for the requested
+    zone's chemicals only. Read-only; does NOT assign a safety verdict -- Apriori
+    discovers co-occurrence patterns, the CAMEO lookup classifies reactivity.
+
+    Accessible to all authenticated roles (VIEWER, ANALYST, ADMIN) because this
+    is informational, not a safety evaluation that could be acted on without
+    human sign-off.
+    """
+    if zone_id not in zone_inventory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Zone '{zone_id}' not found",
+        )
+
+    zone_chemicals = zone_inventory[zone_id]
+    if not zone_chemicals:
+        return CoStorageCheckResponse(zone_id=zone_id, chemicals=[], rules=[])
+
+    # Build the full transaction list (one list[str] per zone) so Apriori has
+    # enough support signal even for single-zone queries -- using all zones
+    # together means a pair that appears in multiple zones gets higher support,
+    # which is the honest answer about how often they co-occur across the site.
+    # Then filter the returned rules to only those whose antecedent+consequent
+    # are both present in the requested zone.
+    all_transactions: list[list[str]] = list(zone_inventory.values())
+
+    miner = CoStoragePatternMiner(min_support=0.2, min_threshold_lift=1.0)
+    raw_rules = miner.discover_co_storage_rules(all_transactions)
+
+    zone_chemical_set = set(zone_chemicals)
+    zone_rules = [
+        CoStorageRule(
+            antecedents=r["antecedents"],
+            consequents=r["consequents"],
+            support=r["support"],
+            confidence=r["confidence"],
+            lift=r["lift"],
+            incompatibility_status=r["incompatibility_status"],
+        )
+        for r in raw_rules
+        if set(r["antecedents"]) | set(r["consequents"]) <= zone_chemical_set
+    ]
+
+    return CoStorageCheckResponse(
+        zone_id=zone_id,
+        chemicals=zone_chemicals,
+        rules=zone_rules,
+    )
+
+
+@app.post("/alerts/{alert_id}/narrate", response_model=NarrateAlertResponse)
+async def narrate_alert(
+    alert_id: str,
+    language: Optional[str] = None,
+    user: UserInfo = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate a plain-language explanation (and optional translation) for an alert.
+
+    Problem: SafetyCardNarrator existed with explain_alert() and
+    translate_safety_card() but was wired to nothing. Alerts are stored in
+    AlertRecord rows (api/db_models.py) which hold all the fields needed to
+    reconstruct the SafetyEvaluationResult the narrator expects.
+
+    Technique: On-demand LLM call (one Mistral request per invocation). Not
+    triggered automatically on every alert read because it costs a real API
+    call; the UI should offer it as an explicit "Explain" button. Falls back
+    gracefully if MISTRAL_API_KEY is absent.
+
+    Safety constraint enforced here and in SafetyCardNarrator: the
+    safety_state in the response is always the deterministic value from the
+    AlertRecord, never a string produced or modified by the LLM.
+
+    Optional query param `language`: 'si' (Sinhala) or 'ta' (Tamil) to also
+    return a translated card alongside the English explanation.
+    """
+    alert = db.query(AlertRecord).filter(AlertRecord.alert_id == alert_id).first()
+    if not alert:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Alert '{alert_id}' not found",
+        )
+
+    # Reconstruct the minimal SafetyEvaluationResult the narrator's prompts
+    # need. We only have what was persisted in AlertRecord (chemical_name,
+    # zone_id, current_value, unit, threshold_value, reasoning) -- there is
+    # no reconstructed provenance or metric_name, so we use safe fallbacks.
+    # The narrator never uses provenance to make a safety decision; it only
+    # uses it for the citation string in the prompt, which falls back to 'N/A'.
+    from datetime import timezone
+
+    from agents.protocols.schemas import SafetyEvaluationResult, SafetyState
+
+    # Map the stored alert status to a SafetyState for the narrator prompt.
+    # AlertRecord.status is workflow state ("pending_review", "approved",
+    # "rejected") -- the actual safety verdict was WARNING when the alert
+    # was created (only WARNING evaluations produce AlertRecords).
+    result = SafetyEvaluationResult(
+        state=SafetyState.WARNING,
+        chemical_name=alert.chemical_name,
+        zone_id=alert.zone_id,
+        metric_name="(see alert reasoning)",
+        current_value=alert.current_value,
+        threshold_value=alert.threshold_value,
+        unit=alert.unit,
+        provenance=None,
+        reasoning=alert.reasoning,
+        evaluated_at=alert.created_at or datetime.now(timezone.utc),
+    )
+
+    narrator = SafetyCardNarrator()
+    explanation = narrator.explain_alert(result)
+
+    translation: Optional[dict[str, str]] = None
+    if language:
+        translation = narrator.translate_safety_card(result, language)
+
+    # safety_state is always the deterministic WARNING from the AlertRecord,
+    # never a string produced by the LLM.
+    return NarrateAlertResponse(
+        alert_id=alert_id,
+        safety_state=SafetyState.WARNING.value,
+        explanation=explanation,
+        translation=translation,
+    )
 
 
 # ============================================================================

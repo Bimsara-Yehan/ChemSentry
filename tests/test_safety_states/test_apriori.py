@@ -50,13 +50,13 @@ def test_incompatible_pair_flagging_uses_real_corpus_chemicals(
     """Regression guard for the bug this fixed: every original
     KNOWN_INCOMPATIBLE_PAIRS entry named at least one chemical absent from
     corpus/raw/ entirely, so real co-storage mining could never match any of
-    them. Sodium Hydroxide + Acetone are both real chemicals with a real SDS
+    them. Sodium hydroxide + Acetone are both real chemicals with a real SDS
     in this project's corpus, and the incompatibility itself is verified,
     real Section 10 text (see apriori_discovery.py's module comment)."""
     transactions = [
-        ["Sodium Hydroxide", "Acetone"],
-        ["Sodium Hydroxide", "Acetone"],
-        ["Sodium Hydroxide", "Acetone"],
+        ["Sodium hydroxide", "Acetone"],
+        ["Sodium hydroxide", "Acetone"],
+        ["Sodium hydroxide", "Acetone"],
     ]
     rules = miner.discover_co_storage_rules(transactions)
     incompatible_rule = next(
