@@ -1,9 +1,10 @@
-"""API route tests for Agent B items wired in PR 1 & PR 2 (M3).
+"""API route tests for Agent B items wired in PR 1, PR 2 & PR 3 (M3).
 
 Tests:
   - GET /zones/{zone_id}/co-storage-check  (Item 1: co-storage / CAMEO warnings)
   - POST /alerts/{alert_id}/narrate         (Item 2: plain-language safety card)
   - POST /classifier/severity               (Item 3: hazard severity classifier)
+  - POST /query/open                        (Item 4: open-ended query orchestrator)
 
 All tests use the shared TestClient from test_api_gateway.py which already
 sets up the fixture retriever and the isolated test database via conftest.py.
@@ -378,3 +379,122 @@ def test_classify_severity_requires_auth():
         },
     )
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Item 4 -- POST /query/open
+# ---------------------------------------------------------------------------
+
+
+def test_query_open_returns_200_with_fallback_when_no_api_key():
+    """When MISTRAL_API_KEY is not set (e.g. CI / local test environment),
+    the endpoint gracefully returns 200 with the orchestrator fallback string
+    and lists all registered tools.
+    """
+    response = client.post(
+        "/query/open",
+        json={"query": "Why did Zone B alert?"},
+        headers=_analyst_token(),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["query"] == "Why did Zone B alert?"
+    assert "FALLBACK: Unable to orchestrate query dynamically" in data["response"]
+    expected_tools = {
+        "search_sds_thresholds",
+        "get_recent_alerts",
+        "check_zone_co_storage",
+    }
+    assert set(data["tools_registered"]) == expected_tools
+
+
+def test_query_open_registered_tool_search_sds_thresholds():
+    """Directly test the registered search_sds_thresholds tool function.
+
+    Exercises the real CorpusRetriever bound in api.main against the fixture
+    corpus (Toluene doc). Proves the tool retrieves real thresholds and citations.
+    """
+    orchestrator = main._get_query_orchestrator()
+    tool_func = orchestrator._tools["search_sds_thresholds"]
+
+    # Known chemical in fixture corpus
+    result = tool_func(chemical_name="Toluene")
+    assert "Toluene" in result
+    assert "max_storage_temperature" in result
+    assert "25.0 C" in result
+    assert "TEST_TOL_001" in result
+
+    # Unknown chemical
+    empty_result = tool_func(chemical_name="UnknownChem")
+    assert "No SDS thresholds found" in empty_result
+
+
+def test_query_open_registered_tool_get_recent_alerts():
+    """Directly test the registered get_recent_alerts tool function.
+
+    Seeds a warning alert and verifies the tool retrieves it from the audit DB.
+    """
+    alert_id = _create_warning_alert_and_get_id()
+    orchestrator = main._get_query_orchestrator()
+    tool_func = orchestrator._tools["get_recent_alerts"]
+
+    # General query
+    result = tool_func(zone_id=None, limit=5)
+    assert alert_id in result
+    assert "Zone_B" in result
+
+    # Filtered by zone
+    zone_result = tool_func(zone_id="Zone_B", limit=5)
+    assert alert_id in zone_result
+
+    # Non-existent zone
+    empty_result = tool_func(zone_id="Zone_Nonexistent", limit=5)
+    assert "No recent alerts found" in empty_result
+
+
+def test_query_open_registered_tool_check_zone_co_storage():
+    """Directly test the registered check_zone_co_storage tool function.
+
+    Proves the tool analyzes Zone_B chemicals and reports the CAMEO violent
+    reaction warning for Sodium hydroxide + Sulfuric acid.
+    """
+    orchestrator = main._get_query_orchestrator()
+    tool_func = orchestrator._tools["check_zone_co_storage"]
+
+    result = tool_func(zone_id="Zone_B")
+    assert "VIOLENT REACTION" in result
+    assert "Sodium hydroxide" in result
+    assert "Sulfuric acid" in result
+
+    # Non-existent zone
+    not_found = tool_func(zone_id="Zone_Missing")
+    assert "not found in inventory" in not_found
+
+
+def test_query_open_accessible_to_viewer():
+    """POST /query/open is a read-only research endpoint accessible to VIEWER."""
+    response = client.post(
+        "/query/open",
+        json={"query": "What are the storage guidelines for zone A?"},
+        headers=_viewer_token(),
+    )
+    assert response.status_code == 200
+
+
+def test_query_open_requires_auth():
+    """Unauthenticated call to /query/open must return 401."""
+    response = client.post(
+        "/query/open",
+        json={"query": "Test query without auth"},
+    )
+    assert response.status_code == 401
+
+
+def test_query_open_validates_non_empty_query():
+    """Empty query string must return 422 validation error."""
+    response = client.post(
+        "/query/open",
+        json={"query": ""},
+        headers=_analyst_token(),
+    )
+    assert response.status_code == 422

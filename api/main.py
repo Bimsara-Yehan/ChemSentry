@@ -32,6 +32,7 @@ from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
 # populates it.)
 from agents.agent_b_analysis.apriori_discovery import CoStoragePatternMiner
 from agents.agent_b_analysis.llm_layer import SafetyCardNarrator
+from agents.agent_b_analysis.query_orchestrator import OpenQueryOrchestrator
 from agents.agent_c_environment.monitor import EnvironmentalMonitor, ZoneEvaluation
 from agents.agent_c_environment.zone_inventory import (
     load_zone_inventory,
@@ -56,6 +57,8 @@ from api.models import (
     CoStorageRule,
     HealthCheck,
     NarrateAlertResponse,
+    OpenQueryRequest,
+    OpenQueryResponse,
     QueryRequest,
     QueryResponse,
     SensorReading,
@@ -778,6 +781,193 @@ async def classify_severity(
             "SDS documents. Only ghs_code_count is derivable from this corpus "
             "(len(ProvenancedThreshold.hazard_statements) from /query or /safety/evaluate)."
         ),
+    )
+
+
+# ============================================================================
+# Agent B — Open-Ended Query Orchestrator Route (M3, PR 3)
+# ============================================================================
+
+
+def _get_query_orchestrator() -> OpenQueryOrchestrator:
+    """Construct an OpenQueryOrchestrator wired to real system tools.
+
+    Problem: OpenQueryOrchestrator (Phase 3 of M3) was an isolated LLM tool-calling
+    engine with no registered tools -- .handle_query() had nothing to call and fell
+    back immediately.
+
+    Architecture & viva rationale (why this technique over an unconstrained LLM):
+    Allowing an LLM to directly answer chemical safety questions creates severe
+    hallucination risk (e.g. inventing storage temperatures or hazard ratings).
+    Instead, ChemSentry uses tool-calling as an orchestrator: the LLM dynamically
+    selects which classical IR or database tools to query, but every factual
+    threshold, citation, and co-storage status comes from deterministic backend
+    code. The LLM synthesizes the tool outputs; it never decides SAFE/WARNING/UNKNOWN
+    or invents numbers.
+
+    Dynamically constructed on each call:
+    Mirrors _get_environmental_monitor() -- binds to the current module-level
+    `retriever` global so test overrides (e.g. test fixture corpora) are immediately
+    visible to the search_sds_thresholds tool without restarting the app.
+
+    Registered tools:
+      1. search_sds_thresholds: Queries classical CorpusRetriever for exact SDS thresholds.
+      2. get_recent_alerts: Queries the DB AlertRecord table for historical incidents.
+      3. check_zone_co_storage: Mines Apriori rules and checks CAMEO reactivity for a zone.
+    """
+    orchestrator = OpenQueryOrchestrator()
+
+    def search_sds_thresholds(chemical_name: str) -> str:
+        """Search Safety Data Sheet (SDS) corpus for chemical storage limits and hazard statements."""
+        if not retriever:
+            return "No SDS retriever available."
+        results = retriever.get_thresholds(chemical_name)
+        if not results:
+            return f"No SDS thresholds found for '{chemical_name}' in the corpus."
+        lines = []
+        for r in results:
+            hazards = (
+                ", ".join(sorted(r.hazard_statements))
+                if r.hazard_statements
+                else "None"
+            )
+            lines.append(
+                f"- {chemical_name}: {r.metric_name} = {r.value} {r.unit} "
+                f"(Source: {r.sds_id} [{r.supplier_name}], {r.section_number}; Citation: {r.citation}). "
+                f"Hazards: {hazards}"
+            )
+        return "\n".join(lines)
+
+    orchestrator.register_tool(
+        name="search_sds_thresholds",
+        description="Search Safety Data Sheets (SDS) for chemical storage limits, temperature thresholds, and hazard statements using classical IR.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "chemical_name": {
+                    "type": "string",
+                    "description": "Name of chemical to look up (e.g. 'Toluene', 'Hydrogen peroxide').",
+                }
+            },
+            "required": ["chemical_name"],
+        },
+        func=search_sds_thresholds,
+    )
+
+    def get_recent_alerts(zone_id: str | None = None, limit: int = 5) -> str:
+        """Retrieve recent safety alert records from the audit database."""
+        db = SessionLocal()
+        try:
+            query = db.query(AlertRecord)
+            if zone_id:
+                query = query.filter(AlertRecord.zone_id == zone_id)
+            alerts = query.order_by(AlertRecord.created_at.desc()).limit(limit).all()
+            if not alerts:
+                target = f"for zone '{zone_id}'" if zone_id else "in the system"
+                return f"No recent alerts found {target}."
+            lines = []
+            for a in alerts:
+                is_signed_off = "Yes" if a.signed_at else "No"
+                lines.append(
+                    f"Alert {a.alert_id} [{a.created_at.isoformat()}]: Zone {a.zone_id}, "
+                    f"Chemical: {a.chemical_name}, Status: {a.status}, Reading: {a.current_value} {a.unit}, "
+                    f"Threshold: {a.threshold_value}, Signed off: {is_signed_off}"
+                )
+            return "\n".join(lines)
+        finally:
+            db.close()
+
+    orchestrator.register_tool(
+        name="get_recent_alerts",
+        description="Query the alert log for recent chemical safety alerts or warnings in a specific zone or across all zones.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "zone_id": {
+                    "type": "string",
+                    "description": "Optional zone filter, e.g. 'Zone_A', 'Zone_B', 'Zone_C'.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of alerts to return (default 5).",
+                },
+            },
+        },
+        func=get_recent_alerts,
+    )
+
+    def check_zone_co_storage(zone_id: str) -> str:
+        """Inspect co-storage rules and CAMEO reactivity warnings for chemicals stored in a zone."""
+        current_inv = _load_zone_inventory()
+        if zone_id not in current_inv:
+            return f"Zone '{zone_id}' not found in inventory."
+        transactions = [chemicals for chemicals in current_inv.values() if chemicals]
+        miner = CoStoragePatternMiner(min_support=0.01, min_threshold_lift=0.0)
+        rules = miner.discover_co_storage_rules(transactions)
+        zone_chems = set(current_inv[zone_id])
+        zone_rules = [
+            r
+            for r in rules
+            if set(r["antecedents"]).issubset(zone_chems)
+            and set(r["consequents"]).issubset(zone_chems)
+        ]
+        if not zone_rules:
+            return (
+                f"No co-storage rules or reactivity warnings found for chemicals in {zone_id} "
+                f"({list(zone_chems)})."
+            )
+        lines = [f"Co-storage analysis for {zone_id} ({', '.join(zone_chems)}):"]
+        for r in zone_rules:
+            lines.append(
+                f"- {' + '.join(r['antecedents'])} -> {' + '.join(r['consequents'])}: "
+                f"Status: {r['incompatibility_status']} (Support: {r['support']:.2f}, Conf: {r['confidence']:.2f})"
+            )
+        return "\n".join(lines)
+
+    orchestrator.register_tool(
+        name="check_zone_co_storage",
+        description="Inspect co-storage compatibility rules and CAMEO reactivity warnings for chemicals stored together in a specific zone.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "zone_id": {
+                    "type": "string",
+                    "description": "Zone identifier to inspect (e.g. 'Zone_A', 'Zone_B', 'Zone_C').",
+                }
+            },
+            "required": ["zone_id"],
+        },
+        func=check_zone_co_storage,
+    )
+
+    return orchestrator
+
+
+@app.post("/query/open", response_model=OpenQueryResponse)
+async def query_open(
+    req: OpenQueryRequest,
+    user: UserInfo = Depends(get_current_user),
+):
+    """Handle open-ended natural language safety officer queries (Item 4, M3 Phase 3).
+
+    Problem: OpenQueryOrchestrator in agents/agent_b_analysis/query_orchestrator.py
+    provides dynamic LLM tool-calling capabilities (e.g. 'Why did Zone B flag a
+    warning last Tuesday?' or 'What are the limits for Toluene?'), but had no API
+    route and no wired tools.
+
+    Design & safety constraints:
+    - Tool-calling routes retrieval and queries deterministically; the LLM synthesizes
+      evidence but never generates safety verdicts or invents numbers.
+    - If MISTRAL_API_KEY is not set (e.g. in test or offline CI), gracefully degrades
+      to the orchestrator's built-in fallback response.
+    - Requires authenticated user (read-only query).
+    """
+    orchestrator = _get_query_orchestrator()
+    answer = orchestrator.handle_query(req.query)
+    return OpenQueryResponse(
+        query=req.query,
+        response=answer,
+        tools_registered=list(orchestrator._tools.keys()),
     )
 
 
