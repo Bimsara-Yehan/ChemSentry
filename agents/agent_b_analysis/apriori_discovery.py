@@ -30,6 +30,15 @@ from mlxtend.preprocessing import TransactionEncoder
 #     "sulfuric acid" among its incompatible materials.
 #   - Ethanol's real Section 10 text lists "potassium permanganate".
 #   - Zinc oxide's real Section 10 text lists "hydrogen peroxide".
+#
+# CASING NOTE (fixed in PR feat/agent-b-wire-items-1-2): chemical names in
+# this dict must use the exact spelling from agents/agent_c_environment/
+# zone_inventory.py DEFAULT_ZONE_INVENTORY -- the CAMEO lookup is a
+# frozenset equality check against names that come directly from that dict.
+# 'Sodium Hydroxide' != 'Sodium hydroxide', etc. The four corpus-verified
+# pairs below were originally title-cased here while the zone inventory
+# used sentence-case names from the real SDS; the miner's CAMEO flagging
+# silently returned COMPATIBLE for every Zone_B pair as a result.
 KNOWN_INCOMPATIBLE_PAIRS = {
     frozenset(
         ["Nitric Acid", "Ethanol"]
@@ -41,16 +50,16 @@ KNOWN_INCOMPATIBLE_PAIRS = {
         ["Ammonium Nitrate", "Fuel Oil"]
     ): "EXPLOSIVE: Oxidizer + Fuel mixture (ANFO explosive risk)",
     frozenset(
-        ["Sodium Hydroxide", "Acetone"]
+        ["Sodium hydroxide", "Acetone"]
     ): "REACTIVE: real Section 10 data (sodium hydroxide SDS, corpus/raw/) lists Acetone as an incompatible material",
     frozenset(
-        ["Sodium Hydroxide", "Sulfuric Acid"]
+        ["Sodium hydroxide", "Sulfuric acid"]
     ): "VIOLENT REACTION: real Section 10 data (sodium hydroxide SDS, corpus/raw/) lists sulfuric acid as an incompatible material -- strong base + strong acid, exothermic neutralisation",
     frozenset(
-        ["Ethanol", "Potassium Permanganate"]
+        ["Ethanol", "Potassium permanganate"]
     ): "REACTIVE: real Section 10 data (ethanol SDS, corpus/raw/) lists potassium permanganate as an incompatible material -- strong oxidizer + organic flammable liquid",
     frozenset(
-        ["Zinc Oxide", "Hydrogen Peroxide"]
+        ["Zinc oxide", "Hydrogen peroxide solution"]
     ): "REACTIVE: real Section 10 data (zinc oxide SDS, corpus/raw/) lists hydrogen peroxide as an incompatible material",
 }
 

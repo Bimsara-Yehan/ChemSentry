@@ -214,3 +214,52 @@ class AuditLog(BaseModel):
     timestamp: datetime
     resource: str  # What was acted on (alert_id, query_id, etc)
     details: dict  # Additional context
+
+
+# ============================================================================
+# Agent B — Co-Storage & Narration Responses (M3)
+# ============================================================================
+
+
+class CoStorageRule(BaseModel):
+    """One Apriori-discovered association rule, with its CAMEO compatibility status.
+
+    Deliberately does not carry a 'safe'/'unsafe' field: Apriori discovers
+    co-occurrence patterns; the CAMEO lookup decides whether that pattern is a
+    known reactivity risk. The route that returns these is read-only evidence,
+    not a safety verdict.
+    """
+
+    antecedents: list[str]
+    consequents: list[str]
+    support: float
+    confidence: float
+    lift: float
+    incompatibility_status: str  # e.g. "REACTIVE: ..." or "COMPATIBLE: ..."
+
+
+class CoStorageCheckResponse(BaseModel):
+    """Response for GET /zones/{zone_id}/co-storage-check.
+
+    Returns the chemicals in the zone and all Apriori-mined association rules
+    cross-referenced against the CAMEO incompatibility matrix.
+    """
+
+    zone_id: str
+    chemicals: list[str]
+    rules: list[CoStorageRule]
+
+
+class NarrateAlertResponse(BaseModel):
+    """Response for POST /alerts/{alert_id}/narrate.
+
+    The LLM explanation and optional translation of an already-decided alert.
+    The 'safety_state' field is always the deterministic verdict from the
+    stored AlertRecord -- never the LLM's rephrasing of it -- so a
+    mistranslation can never change what the caller reads as the verdict.
+    """
+
+    alert_id: str
+    safety_state: str  # copied verbatim from AlertRecord.status context
+    explanation: str
+    translation: Optional[dict[str, str]] = None  # present only if language= supplied
