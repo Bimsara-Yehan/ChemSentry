@@ -14,6 +14,7 @@ import {
   removeChemicalFromZone,
   signOffAlert,
   submitZoneTelemetry,
+  uploadSdsDocument,
 } from './api';
 
 // Demo reading profiles per zone -- NOT a hardcoded safety threshold (the
@@ -158,6 +159,14 @@ function App() {
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditOffset, setAuditOffset] = useState(0);
   const [auditError, setAuditError] = useState('');
+
+  // SDS Upload State
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploadChemName, setUploadChemName] = useState('');
+  const [uploadSupplier, setUploadSupplier] = useState('');
+  const [uploadSuccess, setUploadSuccess] = useState('');
+  const [uploadError, setUploadError] = useState('');
+  const [uploadLoading, setUploadLoading] = useState(false);
 
   const refreshZones = async (authToken) => {
     try {
@@ -346,6 +355,25 @@ function App() {
       await refreshZones(token);
     } catch (err) {
       setZonesError(err.message);
+    }
+  };
+
+  const handleUploadSds = async (e) => {
+    e.preventDefault();
+    if (!uploadFile) return;
+    setUploadLoading(true);
+    setUploadSuccess('');
+    setUploadError('');
+    try {
+      const res = await uploadSdsDocument(token, uploadFile, uploadChemName, uploadSupplier);
+      setUploadSuccess(`SDS '${res.document_id}' for '${res.chemical_name}' uploaded & indexed.`);
+      setUploadFile(null);
+      setUploadChemName('');
+      setUploadSupplier('');
+    } catch (err) {
+      setUploadError(err.message);
+    } finally {
+      setUploadLoading(false);
     }
   };
 
@@ -1077,6 +1105,73 @@ function App() {
                   Create Zone
                 </button>
               </form>
+            </div>
+            <div className="card">
+              <div className="card-title" style={{ marginBottom: '12px' }}>
+                Upload New SDS Document
+              </div>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                Upload an SDS PDF to extract safety thresholds &amp; index into corpus dynamically.
+              </p>
+
+              <form onSubmit={handleUploadSds} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Select SDS PDF
+                  </label>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    className="input-field"
+                    onChange={(e) => setUploadFile(e.target.files[0] || null)}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Chemical Name (Optional override)
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Auto-detected if blank"
+                    value={uploadChemName}
+                    onChange={(e) => setUploadChemName(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Supplier (Optional override)
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="Auto-detected if blank"
+                    value={uploadSupplier}
+                    onChange={(e) => setUploadSupplier(e.target.value)}
+                  />
+                </div>
+
+                <button type="submit" className="action-btn" disabled={uploadLoading}>
+                  {uploadLoading ? 'Uploading & Indexing…' : 'Upload SDS PDF'}
+                </button>
+              </form>
+
+              {uploadSuccess && (
+                <div className="provenance-box" style={{ marginTop: '12px', borderColor: 'var(--green-border)', background: 'var(--green-tint)', color: 'var(--green-safe)' }}>
+                  <div className="provenance-title">Success</div>
+                  {uploadSuccess}
+                </div>
+              )}
+
+              {uploadError && (
+                <div className="provenance-box is-error" style={{ marginTop: '12px' }}>
+                  <div className="provenance-title">Upload Failed</div>
+                  {uploadError}
+                </div>
+              )}
             </div>
           </div>
         </div>
