@@ -263,3 +263,67 @@ class NarrateAlertResponse(BaseModel):
     safety_state: str  # copied verbatim from AlertRecord.status context
     explanation: str
     translation: Optional[dict[str, str]] = None  # present only if language= supplied
+
+
+# ============================================================================
+# Agent B — Hazard Severity Classifier (M3, PR 2)
+# ============================================================================
+
+
+class SeverityRequest(BaseModel):
+    """Request body for POST /classifier/severity.
+
+    The three NFPA fields are explicitly required from the caller -- they are NOT
+    extracted anywhere in this codebase (confirmed: no SDS in corpus/raw/ carries
+    NFPA 704 diamond ratings, and extraction/value_extractor.py has no NFPA parser).
+    Making them required rather than defaulting to 0 ensures the gap is visible at
+    the API surface: a caller who doesn't know the NFPA ratings will get a 422
+    validation error and will not receive a severity label silently computed from
+    fabricated zeros.
+
+    ghs_code_count can be derived from len(ProvenancedThreshold.hazard_statements)
+    on any threshold retrieved by /query or /safety/evaluate -- that is the one
+    feature this pipeline can actually produce from its real corpus.
+    """
+
+    chemical_name: str = Field(
+        description="Chemical being classified (for audit/display only)"
+    )
+    nfpa_health: int = Field(
+        ge=0,
+        le=4,
+        description="NFPA 704 health rating (0-4). Caller must supply; not extracted from SDS.",
+    )
+    nfpa_flammability: int = Field(
+        ge=0,
+        le=4,
+        description="NFPA 704 flammability rating (0-4). Caller must supply; not extracted from SDS.",
+    )
+    nfpa_instability: int = Field(
+        ge=0,
+        le=4,
+        description="NFPA 704 instability rating (0-4). Caller must supply; not extracted from SDS.",
+    )
+    ghs_code_count: int = Field(
+        ge=0,
+        description="Number of GHS hazard statement codes (e.g. H225 -> 1 code). Derivable from len(ProvenancedThreshold.hazard_statements).",
+    )
+
+
+class SeverityResponse(BaseModel):
+    """Response for POST /classifier/severity.
+
+    The classifier output is a severity band (LOW/MEDIUM/HIGH/CRITICAL) with a
+    confidence score. This is NOT a safety verdict (SAFE/WARNING/UNKNOWN) -- it
+    labels the hazard severity of the chemical for triage purposes, downstream
+    of the deterministic safety-state machine.
+    """
+
+    chemical_name: str
+    severity: str  # "LOW", "MEDIUM", "HIGH", or "CRITICAL"
+    confidence: float  # model probability for the predicted class
+    nfpa_health: int
+    nfpa_flammability: int
+    nfpa_instability: int
+    ghs_code_count: int
+    note: str  # explains that NFPA inputs are caller-supplied, not extracted
