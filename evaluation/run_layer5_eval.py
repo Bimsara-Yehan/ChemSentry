@@ -20,14 +20,18 @@ describes.
 UNKNOWN scenarios deliberately cover distinct real mechanisms, not the same
 one repeated: no threshold extracted for that chemical+metric, a chemical
 absent from the corpus entirely, and a unit mismatch against a real
-retrieved threshold. One additional scenario -- a genuine authority-tied
-numeric conflict between two equally-trusted sources -- is NOT built from
-this corpus: the one real case of two supplier documents for the same
-chemical (sulfuric acid) happens to agree exactly (both report 290.0C
-boiling point), so it is not a natural conflict case. That path is instead
-exercised with one clearly-labelled synthetic scenario, constructed directly
-against agents/agent_b_analysis/reconciler.py and safety/state_machine.py
-rather than through corpus lookup -- see `_synthetic_conflict_scenario()`.
+retrieved threshold, and an authority-tied numeric conflict between two
+equally-trusted real sources (E004: ethanol's flash point is 13.0C in the
+Sigma-Aldrich SDS and 12.0C in the Carl Roth SDS, 7.7% apart, beyond the
+reconciler's 5% tolerance).
+
+One additional scenario is NOT built from this corpus: a wide (25.0C vs
+45.0C) authority-tied conflict, constructed directly against
+agents/agent_b_analysis/reconciler.py and safety/state_machine.py -- see
+`_synthetic_conflict_scenario()`. It was added when the corpus had no real
+conflict (sulfuric acid's two supplier documents agree exactly on 290.0C),
+and is kept alongside E004 so the conflict path is tested on a clear-cut
+divergence as well as a near-miss one.
 """
 
 import csv
@@ -101,9 +105,9 @@ def _synthetic_conflict_scenario(
     """The one scenario not built from real corpus lookup -- see module
     docstring for why. Two equally-trusted sources disagreeing on the same
     metric by far more than the reconciler's tolerance is a real code path
-    (agents/agent_b_analysis/reconciler.py's authority-tie handling) that
-    deserves a test even though this corpus has no naturally-occurring
-    example of it yet."""
+    (agents/agent_b_analysis/reconciler.py's authority-tie handling). E004
+    now covers it with real documents on a near-miss (13.0C vs 12.0C); this
+    keeps a clear-cut divergence in the suite as well."""
     request = SafetyEvaluationRequest(
         chemical_name="Synthetic Solvent",
         zone_id="Zone_A",
@@ -140,9 +144,8 @@ def _synthetic_conflict_scenario(
         description=(
             "[SYNTHETIC, not from corpus/raw/] Two equal-authority sources "
             "disagreeing 25.0C vs 45.0C on the same metric -- exercises the "
-            "reconciler's unresolvable-conflict path, which this real "
-            "corpus's one multi-supplier case (sulfuric acid) doesn't "
-            "exercise because both real documents happen to agree"
+            "reconciler's unresolvable-conflict path on a clear-cut "
+            "divergence (E004 covers a real near-miss one)"
         ),
         expected="UNKNOWN",
         actual=result.state.value,
