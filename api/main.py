@@ -1251,7 +1251,9 @@ async def upload_sds_document(
        Section 1 metadata (chemical name, supplier, CAS) and -- since
        `document_id` is derived from the path's stem -- picks up the same
        safe UUID as the document's id.
-    5. Allows optional form field overrides (`chemical_name`, `supplier`) if supplied by admin.
+    5. Allows optional form field overrides (`chemical_name`, `supplier`) if
+       supplied by admin, persisted beside the PDF as `<id>.meta.json` so a
+       restart (which rebuilds the corpus from disk) doesn't discard them.
     6. Transforms raw text to `ProcessedDocument` via `extraction.pipeline.extract_document()`.
     7. Appends the document to `_PROCESSED_DOCUMENTS` and re-instantiates `retriever` global
        in-memory so every downstream route (`/query`, `/safety/evaluate`, telemetry)
@@ -1273,6 +1275,14 @@ async def upload_sds_document(
     from uuid import uuid4
 
     from corpus.crawler.storage import UnsafePathError, resolve_output_path
+    from corpus.pdf_loader import MAX_OVERRIDE_LENGTH, write_metadata_overrides
+
+    overrides = {"chemical_name": chemical_name or "", "supplier": supplier or ""}
+    if any(len(v.strip()) > MAX_OVERRIDE_LENGTH for v in overrides.values()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Chemical name and supplier must be at most {MAX_OVERRIDE_LENGTH} characters.",
+        )
 
     CORPUS_RAW_DIR.mkdir(parents=True, exist_ok=True)
     try:
@@ -1287,17 +1297,15 @@ async def upload_sds_document(
     tmp_path.write_bytes(contents)
     tmp_path.replace(target_path)
 
+    # Saved beside the PDF (not just applied in memory) so the override
+    # survives the corpus being rebuilt from disk on restart; load_sds_pdf()
+    # applies it on this call and on every startup alike.
+    write_metadata_overrides(target_path, overrides)
+
     from corpus.pdf_loader import load_sds_pdf
     from extraction.pipeline import extract_document
 
     raw_text, metadata = load_sds_pdf(target_path)
-
-    # Optional metadata overrides from form
-    if chemical_name:
-        metadata.chemical_name = chemical_name.strip()
-    if supplier:
-        metadata.supplier = supplier.strip()
-
     doc = extract_document(raw_text, metadata)
 
     global _PROCESSED_DOCUMENTS, retriever

@@ -7,6 +7,7 @@ import re
 from datetime import date
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 import api.main as main
@@ -582,7 +583,19 @@ startxref
 %%EOF"""
 
 
-def test_upload_sds_document_and_query_retrieval(tmp_path, monkeypatch):
+@pytest.fixture
+def isolated_corpus(tmp_path, monkeypatch):
+    """Upload tests write real files. Point them at a temp directory -- the
+    real corpus/raw/ is loaded into the live corpus at API startup, and
+    earlier runs left dozens of "Testium" fixtures there -- and restore the
+    in-memory corpus afterwards so uploads don't leak into other tests."""
+    monkeypatch.setattr(main, "CORPUS_RAW_DIR", tmp_path)
+    monkeypatch.setattr(main, "_PROCESSED_DOCUMENTS", list(main._PROCESSED_DOCUMENTS))
+    monkeypatch.setattr(main, "retriever", main.retriever)
+    return tmp_path
+
+
+def test_upload_sds_document_and_query_retrieval(isolated_corpus):
     """Verify admin can upload a new SDS PDF, extract thresholds, and query immediately."""
     headers = _admin_headers()
     files = {"file": ("test_sds_upload.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
@@ -617,7 +630,7 @@ def test_upload_sds_document_rbac_restriction():
     assert res.status_code == 403
 
 
-def test_upload_filename_is_never_used_as_a_path():
+def test_upload_filename_is_never_used_as_a_path(isolated_corpus):
     """A path-traversal-shaped filename must not escape corpus/raw/, and the
     on-disk name must never be derived from attacker-controlled input --
     the stored path is a fresh UUID regardless of what the client named the
@@ -648,7 +661,7 @@ def test_upload_filename_is_never_used_as_a_path():
         assert source_path.exists()
 
 
-def test_upload_same_filename_twice_does_not_collide_on_disk():
+def test_upload_same_filename_twice_does_not_collide_on_disk(isolated_corpus):
     """Two uploads sharing a client-supplied filename must not silently
     overwrite each other -- the old bug this fix replaces (raw filename
     as the path) would have made the second upload clobber the first."""
@@ -665,10 +678,43 @@ def test_upload_same_filename_twice_does_not_collide_on_disk():
     assert Path(second.json()["source_path"]).exists()
 
 
-def test_upload_rejects_non_pdf_content_even_with_pdf_extension():
+def test_upload_rejects_non_pdf_content_even_with_pdf_extension(isolated_corpus):
     """A `.pdf`-named file proves nothing about its actual content -- the
     magic-byte check must reject it before it ever reaches pdfplumber."""
     headers = _admin_headers()
     files = {"file": ("fake.pdf", b"not actually a pdf", "application/pdf")}
     res = client.post("/corpus/documents", files=files, headers=headers)
     assert res.status_code == 400
+
+
+def test_upload_name_override_survives_restart(isolated_corpus):
+    """An admin's chemical-name/supplier override must still apply after the
+    corpus is rebuilt from disk -- before the fix it lived only in memory,
+    so a restart silently re-parsed Section 1 and lost it (a real Carl Roth
+    SDS whose name the parser couldn't read became "unknown" again)."""
+    headers = _admin_headers()
+    files = {"file": ("roth.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+    data = {"chemical_name": "Renamed Chemical", "supplier": "Override Supplier Ltd"}
+    res = client.post("/corpus/documents", files=files, data=data, headers=headers)
+    assert res.status_code == 201
+    assert res.json()["chemical_name"] == "Renamed Chemical"
+    assert Path(res.json()["source_path"]).with_suffix(".meta.json").is_file()
+
+    rebuilt = main._load_retriever()  # what startup does
+
+    thresholds = rebuilt.get_thresholds("Renamed Chemical")
+    assert [t.value for t in thresholds] == [12.0]
+    assert "testium" not in rebuilt.vocabulary
+
+
+def test_upload_rejects_overlong_override(isolated_corpus):
+    headers = _admin_headers()
+    files = {"file": ("x.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+    res = client.post(
+        "/corpus/documents",
+        files=files,
+        data={"chemical_name": "x" * 201},
+        headers=headers,
+    )
+    assert res.status_code == 400
+    assert list(isolated_corpus.iterdir()) == []

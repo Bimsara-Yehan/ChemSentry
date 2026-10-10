@@ -164,19 +164,28 @@ def _normalise_numeric_string(raw: str) -> str:
 # Extraction patterns — all use BOUNDED quantifiers
 # ---------------------------------------------------------------------------
 
-# Storage temperature maximum: "store below 25 °C", "keep under 30°C"
+# Degree sign as real SDS PDFs actually encode it: "°" (U+00B0) normally, but
+# PanReac/ITW SDSs use the masculine ordinal "º" (U+00BA) -- e.g. their
+# 2-Propanol SDS reads "Minimum storage temperature:> 2ºC". Treating only
+# "°" as a degree sign silently drops that real limit.
+_DEG = "[°º]?"
+
+# Storage temperature maximum: "store below 25 °C", "keep under 30°C", and
+# PanReac's symbol-only form "Recommended storage temperature:< +25°C" (bare
+# "<" and an explicit "+" sign, confirmed in a real PanReac 2-Propanol SDS).
 _STORAGE_TEMP_MAX_RE = re.compile(
     r"(?:store|keep|storage).{0,60}?"
-    rf"(?:below|under|not\s+(?:above|exceed)|max(?:imum)?|≤|<=)\s*"
-    rf"({_NUM})\s*°?\s*([CF])",
+    rf"(?:below|under|not\s+(?:above|exceed)|max(?:imum)?|≤|<=|<)\s*\+?"
+    rf"({_NUM})\s*{_DEG}\s*([CF])",
     re.IGNORECASE,
 )
 
-# Storage temperature minimum: "store above 5 °C", "keep above freezing"
+# Storage temperature minimum: "store above 5 °C", "keep above freezing", and
+# PanReac's "Minimum storage temperature:> 2ºC".
 _STORAGE_TEMP_MIN_RE = re.compile(
     r"(?:store|keep|storage).{0,60}?"
-    rf"(?:above|over|min(?:imum)?|≥|>=)\s*"
-    rf"({_NUM})\s*°?\s*([CF])",
+    rf"(?:above|over|min(?:imum)?|≥|>=|>)\s*\+?"
+    rf"({_NUM})\s*{_DEG}\s*([CF])",
     re.IGNORECASE,
 )
 
@@ -188,7 +197,7 @@ _STORAGE_TEMP_MIN_RE = re.compile(
 # Captures an optional range (min, max) or a single ceiling value.
 _STORAGE_TEMP_LABEL_RE = re.compile(
     rf"storage(?:\s+temperature)?\s*:\s*"
-    rf"({_NUM})\s*(?:[-–]\s*({_NUM}))?\s*°?\s*([CF])"
+    rf"\+?({_NUM})\s*(?:[-–]\s*\+?({_NUM}))?\s*{_DEG}\s*([CF])"
     r"(?:\s*\n\s*temperature\b)?",
     re.IGNORECASE,
 )
