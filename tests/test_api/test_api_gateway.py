@@ -3,7 +3,9 @@
 Tests health check, authentication (JWT login), protected routes, RBAC, safety evaluation, and error handling.
 """
 
+import re
 from datetime import date
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -613,3 +615,60 @@ def test_upload_sds_document_rbac_restriction():
     files = {"file": ("test_sds_upload.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
     res = client.post("/corpus/documents", files=files, headers=headers)
     assert res.status_code == 403
+
+
+def test_upload_filename_is_never_used_as_a_path():
+    """A path-traversal-shaped filename must not escape corpus/raw/, and the
+    on-disk name must never be derived from attacker-controlled input --
+    the stored path is a fresh UUID regardless of what the client named the
+    file. Proves the real fix, not just that the upload still returns 200
+    for a well-behaved filename."""
+    import api.main as main
+
+    headers = _admin_headers()
+    malicious_names = [
+        "../../../../etc/evil.pdf",
+        "..\\..\\windows\\evil.pdf",
+        "/etc/passwd.pdf",
+    ]
+    for name in malicious_names:
+        files = {"file": (name, _TEST_SDS_PDF_BYTES, "application/pdf")}
+        res = client.post("/corpus/documents", files=files, headers=headers)
+        assert res.status_code == 201, name
+        data = res.json()
+
+        assert data["original_filename"] == name  # shown back, never trusted as a path
+        source_path = Path(data["source_path"]).resolve()
+        assert source_path.parent == main.CORPUS_RAW_DIR.resolve()
+        assert source_path.is_relative_to(main.CORPUS_RAW_DIR.resolve())
+        # The saved name must be the safe id regex the crawler already
+        # enforces (corpus/crawler/storage.py's _SAFE_ID_RE), never a
+        # literal fragment of the malicious name.
+        assert re.fullmatch(r"[A-Za-z0-9_-]{1,64}\.pdf", source_path.name), name
+        assert source_path.exists()
+
+
+def test_upload_same_filename_twice_does_not_collide_on_disk():
+    """Two uploads sharing a client-supplied filename must not silently
+    overwrite each other -- the old bug this fix replaces (raw filename
+    as the path) would have made the second upload clobber the first."""
+    headers = _admin_headers()
+    files = {"file": ("same_name.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+
+    first = client.post("/corpus/documents", files=files, headers=headers)
+    second = client.post("/corpus/documents", files=files, headers=headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["source_path"] != second.json()["source_path"]
+    assert Path(first.json()["source_path"]).exists()
+    assert Path(second.json()["source_path"]).exists()
+
+
+def test_upload_rejects_non_pdf_content_even_with_pdf_extension():
+    """A `.pdf`-named file proves nothing about its actual content -- the
+    magic-byte check must reject it before it ever reaches pdfplumber."""
+    headers = _admin_headers()
+    files = {"file": ("fake.pdf", b"not actually a pdf", "application/pdf")}
+    res = client.post("/corpus/documents", files=files, headers=headers)
+    assert res.status_code == 400

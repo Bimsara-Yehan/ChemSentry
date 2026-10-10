@@ -1233,14 +1233,27 @@ async def upload_sds_document(
     officers to upload new supplier sheets at runtime.
 
     Why this technique:
-    1. Persists the uploaded PDF file to `corpus/raw/` so it survives server
-       restarts, matching the project's disk-backed corpus strategy (`.gitignore`
-       excludes `corpus/raw/*` except `.gitkeep`).
-    2. Extract raw text via `corpus.pdf_loader.load_sds_pdf()`, which parses Section 1
-       metadata (chemical name, supplier, CAS).
-    3. Allows optional form field overrides (`chemical_name`, `supplier`) if supplied by admin.
-    4. Transforms raw text to `ProcessedDocument` via `extraction.pipeline.extract_document()`.
-    5. Appends the document to `_PROCESSED_DOCUMENTS` and re-instantiates `retriever` global
+    1. The saved filename is a fresh UUID4, never the admin-supplied
+       `file.filename` -- corpus/crawler/storage.py's resolve_output_path()
+       (already covered by that module's own path-traversal test suite) is
+       reused to turn it into a path, so a filename like `../../evil.pdf`
+       can never write outside corpus/raw/, and two uploads can never
+       collide on disk. The original filename is kept only for display, in
+       the response, never as a path component.
+    2. Magic-byte check (`%PDF-`) before trusting the upload is a PDF at
+       all -- a `.pdf`-named file can contain anything; the extension alone
+       proves nothing. Write is atomic (temp file + rename) so a failed
+       upload never leaves a partial file that looks real.
+    3. Persists to `corpus/raw/` so it survives server restarts, matching
+       the project's disk-backed corpus strategy (`.gitignore` excludes
+       `corpus/raw/*` except `.gitkeep`).
+    4. Extract raw text via `corpus.pdf_loader.load_sds_pdf()`, which parses
+       Section 1 metadata (chemical name, supplier, CAS) and -- since
+       `document_id` is derived from the path's stem -- picks up the same
+       safe UUID as the document's id.
+    5. Allows optional form field overrides (`chemical_name`, `supplier`) if supplied by admin.
+    6. Transforms raw text to `ProcessedDocument` via `extraction.pipeline.extract_document()`.
+    7. Appends the document to `_PROCESSED_DOCUMENTS` and re-instantiates `retriever` global
        in-memory so every downstream route (`/query`, `/safety/evaluate`, telemetry)
        immediately resolves thresholds from the newly uploaded SDS without restarting.
     """
@@ -1250,12 +1263,29 @@ async def upload_sds_document(
             detail="File must be a valid PDF document (.pdf).",
         )
 
-    CORPUS_RAW_DIR.mkdir(parents=True, exist_ok=True)
-    target_path = CORPUS_RAW_DIR / file.filename
-
     contents = await file.read()
-    with open(target_path, "wb") as f:
-        f.write(contents)
+    if not contents.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is not a valid PDF (missing %PDF- header).",
+        )
+
+    from uuid import uuid4
+
+    from corpus.crawler.storage import UnsafePathError, resolve_output_path
+
+    CORPUS_RAW_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        target_path = resolve_output_path(CORPUS_RAW_DIR, uuid4().hex)
+    except UnsafePathError as exc:  # pragma: no cover - uuid4().hex is always safe
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not compute a safe storage path: {exc}",
+        ) from exc
+
+    tmp_path = target_path.with_name(target_path.name + ".part")
+    tmp_path.write_bytes(contents)
+    tmp_path.replace(target_path)
 
     from corpus.pdf_loader import load_sds_pdf
     from extraction.pipeline import extract_document
@@ -1276,6 +1306,7 @@ async def upload_sds_document(
 
     return DocumentUploadResponse(
         document_id=metadata.document_id,
+        original_filename=file.filename,
         chemical_name=metadata.chemical_name,
         supplier=metadata.supplier,
         source_path=str(target_path),
