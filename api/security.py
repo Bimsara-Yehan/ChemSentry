@@ -337,13 +337,17 @@ def _get_demo_users():
 
 
 def authenticate_user(username: str, password: str) -> Optional[tuple[str, UserRole]]:
-    """Authenticate user by username/password (demo only).
+    """Authenticate user by username/password.
 
-    In production, this would query a user database.
+    Demo accounts are only allowed in development mode. In production mode
+    (CHEMSENTRY_ENV=production), fallback to demo accounts is strictly disabled.
 
     Returns:
         (user_id, role) if authenticated, None otherwise
     """
+    if _is_production():
+        return None
+
     demo_users = _get_demo_users()
     if username not in demo_users:
         return None

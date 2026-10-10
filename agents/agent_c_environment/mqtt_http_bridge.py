@@ -19,13 +19,16 @@ Run alongside `uvicorn api.main:app` and `docker compose up` (Mosquitto):
         --mqtt-certfile firmware/certs/agent_c_bridge.crt.pem \\
         --mqtt-keyfile firmware/certs/agent_c_bridge.key.pem \\
         --api-base http://localhost:8000 \\
-        --username analyst_user --password analyst123
+        --username analyst_user
+    # Set password via: $env:CHEMSENTRY_BRIDGE_PASSWORD = "your-password"
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
+import sys
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -163,13 +166,23 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--api-base", default="http://localhost:8000")
     parser.add_argument("--username", default="analyst_user")
-    parser.add_argument("--password", default="analyst123")
+    parser.add_argument(
+        "--password",
+        default=os.getenv("CHEMSENTRY_BRIDGE_PASSWORD"),
+        help="API password (or set CHEMSENTRY_BRIDGE_PASSWORD env var)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     args = _parse_args()
+    if not args.password:
+        logger.error(
+            "Error: MQTT bridge password required. Please set the "
+            "CHEMSENTRY_BRIDGE_PASSWORD environment variable or pass --password."
+        )
+        sys.exit(1)
     bridge = MqttHttpBridge(
         mqtt_host=args.mqtt_host,
         mqtt_port=args.mqtt_port,

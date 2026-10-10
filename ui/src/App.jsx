@@ -363,31 +363,41 @@ function App() {
                     Latest reading from this zone's sensor feed
                   </p>
 
-                  <div className="metrics-row">
-                    <div
-                      className={`metric-box ${currentZoneData.is_excursion ? 'warning' : ''}`}
-                    >
-                      <div className="metric-label">Temperature</div>
-                      <div className="metric-value">
-                        {currentZoneData.last_reading.temperature_celsius}{' '}
-                        <span className="metric-unit">°C</span>
-                      </div>
-                      <div className="metric-subtext">
-                        <span className={`state-badge state-${currentZoneData.safety_state}`}>
-                          {currentZoneData.safety_state}
-                        </span>
-                      </div>
-                    </div>
+                  {currentZoneData.last_reading ? (
+                    <>
+                      <div className="metrics-row">
+                        <div
+                          className={`metric-box ${currentZoneData.is_excursion ? 'warning' : ''}`}
+                        >
+                          <div className="metric-label">Temperature</div>
+                          <div className="metric-value">
+                            {currentZoneData.last_reading.temperature_celsius}{' '}
+                            <span className="metric-unit">°C</span>
+                          </div>
+                          <div className="metric-subtext">
+                            <span className={`state-badge state-${currentZoneData.safety_state}`}>
+                              {currentZoneData.safety_state}
+                            </span>
+                          </div>
+                        </div>
 
-                    <div className="metric-box">
-                      <div className="metric-label">Relative Humidity</div>
-                      <div className="metric-value">
-                        {currentZoneData.last_reading.humidity_percent}{' '}
-                        <span className="metric-unit">%</span>
+                        <div className="metric-box">
+                          <div className="metric-label">Relative Humidity</div>
+                          <div className="metric-value">
+                            {currentZoneData.last_reading.humidity_percent}{' '}
+                            <span className="metric-unit">%</span>
+                          </div>
+                          <div className="metric-subtext">Not evaluated — no threshold retrieved</div>
+                        </div>
                       </div>
-                      <div className="metric-subtext">Not evaluated — no threshold retrieved</div>
+                    </>
+                  ) : (
+                    <div className="provenance-box" style={{ marginBottom: '16px' }}>
+                      <div className="provenance-title">⏳ Waiting for first sensor reading</div>
+                      No real sensor data has been received for this zone yet. Submit a telemetry
+                      reading or start the simulator to see live evaluation.
                     </div>
-                  </div>
+                  )}
 
                   {currentZoneData.checks.map((check, idx) => (
                     <div

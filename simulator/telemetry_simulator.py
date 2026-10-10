@@ -50,23 +50,29 @@ _EXCURSION_TEMP_C = 18.0
 Mode = Literal["steady", "excursion"]
 
 
-def generate_reading(zone_id: str, mode: Mode, device_id: str) -> SensorReading:
+def generate_reading(
+    zone_id: str,
+    mode: Mode,
+    device_id: str,
+    normal_temp: float = 20.0,
+    excursion_temp: float = 18.0,
+) -> SensorReading:
     """Produce one plausible sensor reading for a zone.
 
     Args:
         zone_id: Target zone (must match a topic Agent C subscribes to).
         mode: "steady" for a normal ambient reading; "excursion" for a
             reading deliberately outside the plausible range, to demo the
-            WARNING path (see module docstring for why this only reliably
-            triggers a real WARNING in a zone with a real extracted
-            threshold, i.e. Zone_C in this corpus).
+            WARNING path.
         device_id: Simulated ESP32 identifier.
+        normal_temp: Normal ambient test input in degrees C (default: 20.0 °C).
+        excursion_temp: Excursion test input in degrees C (default: 18.0 °C).
     """
     humidity = round(random.uniform(*_STEADY_HUMIDITY_RANGE_PCT), 1)
     if mode == "steady":
-        temperature = round(random.uniform(*_STEADY_TEMP_RANGE_C), 1)
+        temperature = normal_temp
     else:
-        temperature = _EXCURSION_TEMP_C
+        temperature = excursion_temp
 
     return SensorReading(
         zone_id=zone_id,
@@ -118,6 +124,8 @@ class TelemetryPublisher:
         mode: Mode,
         interval_seconds: float,
         iterations: int | None = None,
+        normal_temp: float = 20.0,
+        excursion_temp: float = 18.0,
     ) -> None:
         """Publish one reading per zone every `interval_seconds`.
 
@@ -128,7 +136,9 @@ class TelemetryPublisher:
         count = 0
         while iterations is None or count < iterations:
             for zone_id in zone_ids:
-                reading = generate_reading(zone_id, mode, self._device_id)
+                reading = generate_reading(
+                    zone_id, mode, self._device_id, normal_temp, excursion_temp
+                )
                 self.publish_reading(reading)
             count += 1
             if iterations is None or count < iterations:
@@ -153,6 +163,18 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--mode", choices=["steady", "excursion"], default="steady")
     parser.add_argument(
+        "--normal-temp",
+        type=float,
+        default=20.0,
+        help="Normal ambient temperature test input in degrees C (default: 20.0, test input only, not a threshold).",
+    )
+    parser.add_argument(
+        "--excursion-temp",
+        type=float,
+        default=18.0,
+        help="Excursion temperature test input in degrees C (default: 18.0, test input only, not a threshold).",
+    )
+    parser.add_argument(
         "--interval", type=float, default=5.0, help="Seconds between rounds."
     )
     parser.add_argument(
@@ -172,7 +194,14 @@ def main() -> None:
         keyfile=args.keyfile,
     )
     try:
-        publisher.run(args.zones, args.mode, args.interval, args.count)
+        publisher.run(
+            args.zones,
+            args.mode,
+            args.interval,
+            args.count,
+            normal_temp=args.normal_temp,
+            excursion_temp=args.excursion_temp,
+        )
     finally:
         publisher.disconnect()
 

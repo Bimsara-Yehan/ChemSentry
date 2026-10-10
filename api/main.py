@@ -11,25 +11,22 @@ Auth flow:
   5. RBAC enforces role-based access (viewer < analyst < admin)
 """
 
+import hashlib
+import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 # Import Agent A retrieval, Agent B & Safety State Machine components
 from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
 
-# Importing these registers AlertRecord/AuditLogRecord/ZoneInventoryRecord on
-# Base.metadata before init_db() runs at startup -- without this import
-# having happened, Base.metadata.create_all() would silently create no
-# tables for them. (ZoneInventoryRecord itself is unused by name here --
-# defined in the same module as AlertRecord, so importing that already
-# registers it -- but seed_default_zone_inventory() below is what actually
-# populates it.)
 from agents.agent_b_analysis.apriori_discovery import CoStoragePatternMiner
 from agents.agent_b_analysis.llm_layer import SafetyCardNarrator
 from agents.agent_b_analysis.query_orchestrator import OpenQueryOrchestrator
@@ -50,7 +47,13 @@ from api.database import (
     get_db_schema_info,
     init_db,
 )
-from api.db_models import AlertRecord, AuditLogRecord, next_alert_id
+from api.db_models import (
+    AlertRecord,
+    AuditLogRecord,
+    ZoneInventoryRecord,
+    alert_to_dict,
+    next_alert_id,
+)
 from api.models import (
     ChemicalCheckOut,
     CoStorageCheckResponse,
@@ -85,10 +88,20 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Add CORS middleware (allow frontend to call from different origin during dev)
+# Add CORS middleware (configurable via CHEMSENTRY_CORS_ORIGINS env var)
+cors_origins_env = os.getenv("CHEMSENTRY_CORS_ORIGINS", "")
+if cors_origins_env.strip():
+    origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+else:
+    origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -97,24 +110,11 @@ app.add_middleware(
 # Initialize engines
 evaluator = DeterministicSafetyEvaluator()
 
-# Real corpus location -- gitignored (see .gitignore), populated by dropping
-# local SDS PDFs in. A fresh clone or CI checkout has none, which is why
-# _load_retriever() falls back to an empty CorpusRetriever rather than
-# failing: an empty corpus correctly makes every query resolve to nothing,
-# which /safety/evaluate turns into UNKNOWN (see
-# safety/state_machine.py's "no thresholds retrieved" path) -- the honest
-# behaviour per CLAUDE.md, not a fabricated verdict.
 CORPUS_RAW_DIR = Path(__file__).resolve().parent.parent / "corpus" / "raw"
 
 
 def _load_retriever() -> CorpusRetriever:
-    """Build the real Agent A retriever from corpus/raw/ at startup.
-
-    Tests override the module-level `retriever` directly with a small
-    synthetic fixture corpus (see tests/test_api/test_api_gateway.py) rather
-    than depending on real PDFs being present, since corpus/raw/ is
-    gitignored and empty in CI.
-    """
+    """Build the real Agent A retriever from corpus/raw/ at startup."""
     if CORPUS_RAW_DIR.is_dir() and any(CORPUS_RAW_DIR.glob("*.pdf")):
         return CorpusRetriever.from_local_pdfs(CORPUS_RAW_DIR)
     return CorpusRetriever([])
@@ -122,24 +122,11 @@ def _load_retriever() -> CorpusRetriever:
 
 retriever = _load_retriever()
 
-# Called at import time, not only registered as a startup event: FastAPI's
-# on_event("startup") does not fire for a plain `TestClient(app)` unless it's
-# used as a context manager (`with TestClient(app) as client:`), which this
-# project's test suite doesn't do. Relying on the event alone meant tables
-# were only ever created if some earlier test run had already left them on
-# disk -- true locally by accident, false on a fresh clone or in CI, where
-# every /alerts, /admin/sign-off, and WARNING-path /safety/evaluate call
-# failed with "no such table: alerts". create_all() is idempotent, so
-# calling it here and again in the startup event below is harmless.
 init_db()
 
 
 def _seed_zone_inventory() -> None:
-    """Populate Agent C's zone inventory on first run (idempotent, see
-    seed_default_zone_inventory's docstring) -- same "call at import time,
-    not only the startup event" reasoning as init_db() above: a plain
-    TestClient(app) never fires on_event("startup"), so this must not be
-    the only place it's called."""
+    """Populate Agent C's zone inventory on first run."""
     db = SessionLocal()
     try:
         seed_default_zone_inventory(db)
@@ -158,65 +145,51 @@ def _load_zone_inventory() -> dict[str, list[str]]:
         db.close()
 
 
-# Agent C (M4): the real EnvironmentalMonitor -- holds no chemical knowledge
-# of its own, only which chemicals are in which zone (see
-# agents/agent_c_environment/monitor.py's module docstring).
 zone_inventory = _load_zone_inventory()
 
 
 def _get_environmental_monitor() -> EnvironmentalMonitor:
-    """Construct the monitor fresh from the current module-level `retriever`
-    on every call, rather than capturing it once at import time.
-
-    Mirrors how every other route already reads the module-level `retriever`
-    global at call time, not at import time -- tests override `main.retriever`
-    with a small fixture corpus after this module has already been imported
-    (see tests/test_api/test_api_gateway.py); a `retriever` captured once in
-    a module-level `EnvironmentalMonitor` would never see that override.
-    Construction itself is cheap (no I/O, just storing references).
-    """
     return EnvironmentalMonitor(retriever, evaluator, zone_inventory)
 
 
-# Ephemeral instrument-state caches, deliberately NOT persisted to the DB --
-# unlike AlertRecord/AuditLogRecord (audit-critical, append-only), "what did
-# the sensor last read" is not a decision that needs a durable record; only
-# the alerts an excursion produces are. Rebuilt from scratch on every
-# process restart via _seed_initial_zone_readings() below.
+# Ephemeral instrument-state caches
 _LATEST_ZONE_EVALUATIONS: dict[str, ZoneEvaluation] = {}
 _LAST_ALERT_TIMESTAMP: dict[str, datetime] = {}
 
 
-def _seed_initial_zone_readings() -> None:
-    """Give every inventoried zone one evaluated ambient reading at startup,
-    so GET /zones has real data (from the real retrieval + safety-evaluation
-    pipeline) to show immediately -- rather than requiring the simulator to
-    have already published something first."""
-    monitor = _get_environmental_monitor()
-    for zone_id in zone_inventory:
-        reading = SensorReading(
-            zone_id=zone_id,
-            temperature_celsius=20.0,
-            humidity_percent=45.0,
-            timestamp=datetime.now(timezone.utc),
-            device_id="startup-default",
-        )
-        _LATEST_ZONE_EVALUATIONS[zone_id] = monitor.handle_reading(reading)
-
-
-_seed_initial_zone_readings()
-
-
 def _zone_status_response(zone_id: str) -> ZoneStatusResponse:
     """Build the API-facing view of a zone from its latest evaluation."""
-    evaluation = _LATEST_ZONE_EVALUATIONS[zone_id]
+    evaluation = _LATEST_ZONE_EVALUATIONS.get(zone_id)
+    chems = zone_inventory.get(zone_id, [])
+    if evaluation is None or evaluation.reading is None:
+        return ZoneStatusResponse(
+            zone_id=zone_id,
+            last_reading=None,
+            is_excursion=False,
+            safety_state="UNKNOWN",
+            last_alert_timestamp=_LAST_ALERT_TIMESTAMP.get(zone_id),
+            chemicals=chems,
+            checks=[
+                ChemicalCheckOut(
+                    chemical_name=chem,
+                    metric_name="temperature_celsius",
+                    state="UNKNOWN",
+                    current_value=0.0,
+                    threshold_value=None,
+                    reasoning="No sensor reading received yet for this zone.",
+                    citation=None,
+                )
+                for chem in chems
+            ],
+        )
+
     return ZoneStatusResponse(
         zone_id=zone_id,
         last_reading=evaluation.reading,
         is_excursion=evaluation.is_excursion,
         safety_state=evaluation.aggregated_state.value,
         last_alert_timestamp=_LAST_ALERT_TIMESTAMP.get(zone_id),
-        chemicals=zone_inventory.get(zone_id, []),
+        chemicals=chems,
         checks=[
             ChemicalCheckOut(
                 chemical_name=c.chemical_name,

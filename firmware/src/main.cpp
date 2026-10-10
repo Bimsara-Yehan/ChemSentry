@@ -30,12 +30,12 @@ const uint16_t MQTT_PORT = SECRET_MQTT_PORT;
 // extracted numeric storage-temperature range in this project's corpus, so
 // it is the only zone where a live reading can produce a genuine SAFE/WARNING
 // rather than an honest UNKNOWN.
-const char *ZONE_ID = "Zone_C";
+const char *ZONE_ID = SECRET_ZONE_ID;
 
 // Topic scheme fixed by agents/agent_c_environment/mqtt_subscriber.py:
-// chemsentry/sensors/<zone_id>/reading -- must match exactly, Agent C parses
-// the zone_id out of both the topic and the payload.
-const char *MQTT_TOPIC = "chemsentry/sensors/Zone_C/reading";
+// chemsentry/sensors/<zone_id>/reading -- built dynamically from SECRET_ZONE_ID
+String mqttTopicStr = String("chemsentry/sensors/") + SECRET_ZONE_ID + "/reading";
+const char *MQTT_TOPIC = mqttTopicStr.c_str();
 
 // TLS material (see secrets.h) mirrors exactly what
 // agents/agent_c_environment/mqtt_subscriber.py and

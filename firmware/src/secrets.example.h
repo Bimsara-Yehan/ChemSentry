@@ -21,6 +21,9 @@
 #define SECRET_MQTT_HOST "192.168.1.100"
 #define SECRET_MQTT_PORT 8883
 
+// --- Zone ---
+#define SECRET_ZONE_ID "Zone_C"
+
 // --- TLS material ---
 // Generate with (from repo root):
 //   python firmware/generate_certs.py --out firmware/certs --devices <device> \
