@@ -134,16 +134,19 @@ not use the demo passwords in any shared deployment.
   limit is on file.
 - **Humidity dial:** shown for information. It is not evaluated because no SDS in the corpus
   states a humidity limit.
-- **Stored chemicals:** periodic-table style tiles, coloured by each chemical's own checks.
+- **Stored chemicals:** one tile per chemical, coloured by that chemical's own checks.
   Click a tile to see the exact evaluation trace (what was compared, against which limit, from
   which document).
 - **Storage limits by source:** table of each limit with its supplier, SDS ID and section.
 - **Storage compatibility** (right column): Agent B's co-storage analysis.
   - Apriori lists pairs of chemicals that are stored together, with support, confidence and
     lift.
-  - Each pair is checked against Agent B's reactivity lookup, and the backend's own status is
-    shown as the tag (for example **Violent reaction** for sodium hydroxide + sulfuric acid, or
-    **Compatible** when the lookup has no entry).
+  - Each pair is checked against Agent B's reactivity lookup, and the backend's status is shown
+    as the tag, for example **Violent reaction** for sodium hydroxide + sulfuric acid.
+  - A pair the lookup doesn't list is tagged **No known warning on file** in a neutral colour,
+    never green: missing evidence is not a confirmation that the pair is safe.
+  - Only pairs are shown. The lookup checks exact pairs, so its answer for a group of three or
+    more says nothing about the pairs inside it.
   - *Why it's worded that way:* Apriori finds patterns, not hazards. The hazard label comes
     only from the reactivity lookup.
 
