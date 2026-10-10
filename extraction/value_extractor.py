@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 import signal
 import sys
+import threading
 
 from extraction.models import (
     ClaimType,
@@ -59,7 +60,14 @@ def _regex_findall_safe(
 
     On Windows, signal.SIGALRM is not available, so we fall back to
     running without a hard timeout but with bounded patterns.
-    On Unix, uses SIGALRM for a hard time limit.
+    On Unix, uses SIGALRM for a hard time limit -- but only when called
+    from the main thread of the main interpreter, since signal.signal()
+    raises ValueError otherwise. extract_document() can run inside an
+    async endpoint (api/main.py's upload_sds_document), and ASGI test
+    clients execute async handlers on a background event-loop thread, not
+    the main thread, so this path is reachable in practice, not just in
+    theory. We fall back to the same bounded-pattern path Windows uses
+    rather than crash the request.
 
     Args:
         pattern: Compiled regex pattern (should use bounded quantifiers).
@@ -70,9 +78,14 @@ def _regex_findall_safe(
         List of Match objects found.
 
     Raises:
-        RegexTimeoutError: If the regex exceeds the timeout (Unix only).
+        RegexTimeoutError: If the regex exceeds the timeout (main thread,
+            Unix only).
     """
-    if sys.platform != "win32" and hasattr(signal, "SIGALRM"):
+    if (
+        sys.platform != "win32"
+        and hasattr(signal, "SIGALRM")
+        and threading.current_thread() is threading.main_thread()
+    ):
 
         def _handler(signum, frame):
             raise RegexTimeoutError(

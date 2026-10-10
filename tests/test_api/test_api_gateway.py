@@ -3,7 +3,9 @@
 Tests health check, authentication (JWT login), protected routes, RBAC, safety evaluation, and error handling.
 """
 
+import re
 from datetime import date
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -530,3 +532,143 @@ def test_get_audit_log_endpoint():
     assert "entries" in data
     assert "total" in data
     assert isinstance(data["entries"], list)
+
+
+# ============================================================================
+# SDS Document Upload Tests (M4)
+# ============================================================================
+
+_TEST_SDS_PDF_BYTES = b"""%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 120 >>
+stream
+BT
+/F1 12 Tf
+50 700 Td
+(Product name : Testium) Tj
+0 -20 Td
+(Company : Test Supplier) Tj
+0 -20 Td
+(SECTION 7: Handling and storage) Tj
+0 -20 Td
+(Store below 12 C.) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000223 00000 n 
+0000000290 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+460
+%%EOF"""
+
+
+def test_upload_sds_document_and_query_retrieval(tmp_path, monkeypatch):
+    """Verify admin can upload a new SDS PDF, extract thresholds, and query immediately."""
+    headers = _admin_headers()
+    files = {"file": ("test_sds_upload.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+
+    upload_res = client.post("/corpus/documents", files=files, headers=headers)
+    assert upload_res.status_code == 201
+    upload_data = upload_res.json()
+    assert upload_data["chemical_name"] == "Testium"
+    assert upload_data["supplier"] == "Test Supplier"
+
+    # Query the newly uploaded chemical in the SAME test
+    query_res = client.post(
+        "/query", json={"chemical_name": "Testium"}, headers=headers
+    )
+    assert query_res.status_code == 200
+    query_data = query_res.json()
+    thresholds = query_data["evidence"]["thresholds"]
+    assert len(thresholds) > 0
+    assert thresholds[0]["parameter"] == "max_storage_temperature"
+    assert thresholds[0]["value"] == 12.0
+    assert thresholds[0]["unit"] == "C"
+
+
+def test_upload_sds_document_rbac_restriction():
+    """Verify non-admin cannot upload SDS documents."""
+    login_res = client.post(
+        "/auth/login", json={"username": "analyst_user", "password": "analyst123"}
+    )
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+    files = {"file": ("test_sds_upload.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+    res = client.post("/corpus/documents", files=files, headers=headers)
+    assert res.status_code == 403
+
+
+def test_upload_filename_is_never_used_as_a_path():
+    """A path-traversal-shaped filename must not escape corpus/raw/, and the
+    on-disk name must never be derived from attacker-controlled input --
+    the stored path is a fresh UUID regardless of what the client named the
+    file. Proves the real fix, not just that the upload still returns 200
+    for a well-behaved filename."""
+    import api.main as main
+
+    headers = _admin_headers()
+    malicious_names = [
+        "../../../../etc/evil.pdf",
+        "..\\..\\windows\\evil.pdf",
+        "/etc/passwd.pdf",
+    ]
+    for name in malicious_names:
+        files = {"file": (name, _TEST_SDS_PDF_BYTES, "application/pdf")}
+        res = client.post("/corpus/documents", files=files, headers=headers)
+        assert res.status_code == 201, name
+        data = res.json()
+
+        assert data["original_filename"] == name  # shown back, never trusted as a path
+        source_path = Path(data["source_path"]).resolve()
+        assert source_path.parent == main.CORPUS_RAW_DIR.resolve()
+        assert source_path.is_relative_to(main.CORPUS_RAW_DIR.resolve())
+        # The saved name must be the safe id regex the crawler already
+        # enforces (corpus/crawler/storage.py's _SAFE_ID_RE), never a
+        # literal fragment of the malicious name.
+        assert re.fullmatch(r"[A-Za-z0-9_-]{1,64}\.pdf", source_path.name), name
+        assert source_path.exists()
+
+
+def test_upload_same_filename_twice_does_not_collide_on_disk():
+    """Two uploads sharing a client-supplied filename must not silently
+    overwrite each other -- the old bug this fix replaces (raw filename
+    as the path) would have made the second upload clobber the first."""
+    headers = _admin_headers()
+    files = {"file": ("same_name.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+
+    first = client.post("/corpus/documents", files=files, headers=headers)
+    second = client.post("/corpus/documents", files=files, headers=headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["source_path"] != second.json()["source_path"]
+    assert Path(first.json()["source_path"]).exists()
+    assert Path(second.json()["source_path"]).exists()
+
+
+def test_upload_rejects_non_pdf_content_even_with_pdf_extension():
+    """A `.pdf`-named file proves nothing about its actual content -- the
+    magic-byte check must reject it before it ever reaches pdfplumber."""
+    headers = _admin_headers()
+    files = {"file": ("fake.pdf", b"not actually a pdf", "application/pdf")}
+    res = client.post("/corpus/documents", files=files, headers=headers)
+    assert res.status_code == 400

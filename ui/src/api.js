@@ -170,3 +170,23 @@ export async function getAuditLog(token, limit = 50, offset = 0) {
   }
 }
 
+export async function uploadSdsDocument(token, file, chemicalName = '', supplier = '') {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (chemicalName) formData.append('chemical_name', chemicalName);
+    if (supplier) formData.append('supplier', supplier);
+
+    const res = await client.post('/corpus/documents', formData, {
+      headers: {
+        ...authHeader(token),
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return res.data;
+  } catch (err) {
+    unwrap(err);
+  }
+}
+
+

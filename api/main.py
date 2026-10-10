@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -67,6 +67,7 @@ from api.models import (
     CoStorageRule,
     CreateUserRequest,
     CreateZoneRequest,
+    DocumentUploadResponse,
     HealthCheck,
     NarrateAlertResponse,
     OpenQueryRequest,
@@ -89,6 +90,7 @@ from api.security import (
     get_current_user,
     require_role,
 )
+from extraction.models import ProcessedDocument
 from safety.state_machine import DeterministicSafetyEvaluator
 
 # Create FastAPI app
@@ -120,16 +122,26 @@ evaluator = DeterministicSafetyEvaluator()
 CORPUS_RAW_DIR = Path(__file__).resolve().parent.parent / "corpus" / "raw"
 
 
+_PROCESSED_DOCUMENTS: list[ProcessedDocument] = []
+
+
 def _load_retriever() -> CorpusRetriever:
     """Build the real Agent A retriever from corpus/raw/ at startup.
 
-    Tests override the module-level `retriever` directly with a small
-    synthetic fixture corpus (see tests/test_api/test_api_gateway.py) rather
-    than depending on real PDFs being present, since corpus/raw/ is
-    gitignored and empty in CI.
+    Keeps module-level _PROCESSED_DOCUMENTS populated so SDS uploads can extract,
+    append, and rebuild CorpusRetriever(_PROCESSED_DOCUMENTS) in-memory dynamically.
     """
+    global _PROCESSED_DOCUMENTS
     if CORPUS_RAW_DIR.is_dir() and any(CORPUS_RAW_DIR.glob("*.pdf")):
-        return CorpusRetriever.from_local_pdfs(CORPUS_RAW_DIR)
+        from corpus.pdf_loader import load_all_local_pdfs
+        from extraction.pipeline import extract_document
+
+        _PROCESSED_DOCUMENTS = [
+            extract_document(raw_text, metadata)
+            for raw_text, metadata in load_all_local_pdfs(CORPUS_RAW_DIR)
+        ]
+        return CorpusRetriever(_PROCESSED_DOCUMENTS)
+    _PROCESSED_DOCUMENTS = []
     return CorpusRetriever([])
 
 
@@ -1195,6 +1207,111 @@ async def get_audit_log(
         for row in rows
     ]
     return AuditLogResponse(entries=entries, total=total)
+
+
+# ============================================================================
+# SDS Document Upload Route (M4)
+# ============================================================================
+
+
+@app.post(
+    "/corpus/documents",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_sds_document(
+    file: UploadFile = File(...),
+    chemical_name: Optional[str] = Form(None),
+    supplier: Optional[str] = Form(None),
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+):
+    """Upload a new Safety Data Sheet (SDS) PDF to the corpus (ADMIN only).
+
+    Problem solved: SDS acquisition is an ongoing operational requirement.
+    Previously, SDS PDFs were placed manually into `corpus/raw/` on disk and
+    loaded at server startup -- there was no dynamic API endpoint for safety
+    officers to upload new supplier sheets at runtime.
+
+    Why this technique:
+    1. The saved filename is a fresh UUID4, never the admin-supplied
+       `file.filename` -- corpus/crawler/storage.py's resolve_output_path()
+       (already covered by that module's own path-traversal test suite) is
+       reused to turn it into a path, so a filename like `../../evil.pdf`
+       can never write outside corpus/raw/, and two uploads can never
+       collide on disk. The original filename is kept only for display, in
+       the response, never as a path component.
+    2. Magic-byte check (`%PDF-`) before trusting the upload is a PDF at
+       all -- a `.pdf`-named file can contain anything; the extension alone
+       proves nothing. Write is atomic (temp file + rename) so a failed
+       upload never leaves a partial file that looks real.
+    3. Persists to `corpus/raw/` so it survives server restarts, matching
+       the project's disk-backed corpus strategy (`.gitignore` excludes
+       `corpus/raw/*` except `.gitkeep`).
+    4. Extract raw text via `corpus.pdf_loader.load_sds_pdf()`, which parses
+       Section 1 metadata (chemical name, supplier, CAS) and -- since
+       `document_id` is derived from the path's stem -- picks up the same
+       safe UUID as the document's id.
+    5. Allows optional form field overrides (`chemical_name`, `supplier`) if supplied by admin.
+    6. Transforms raw text to `ProcessedDocument` via `extraction.pipeline.extract_document()`.
+    7. Appends the document to `_PROCESSED_DOCUMENTS` and re-instantiates `retriever` global
+       in-memory so every downstream route (`/query`, `/safety/evaluate`, telemetry)
+       immediately resolves thresholds from the newly uploaded SDS without restarting.
+    """
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a valid PDF document (.pdf).",
+        )
+
+    contents = await file.read()
+    if not contents.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is not a valid PDF (missing %PDF- header).",
+        )
+
+    from uuid import uuid4
+
+    from corpus.crawler.storage import UnsafePathError, resolve_output_path
+
+    CORPUS_RAW_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        target_path = resolve_output_path(CORPUS_RAW_DIR, uuid4().hex)
+    except UnsafePathError as exc:  # pragma: no cover - uuid4().hex is always safe
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not compute a safe storage path: {exc}",
+        ) from exc
+
+    tmp_path = target_path.with_name(target_path.name + ".part")
+    tmp_path.write_bytes(contents)
+    tmp_path.replace(target_path)
+
+    from corpus.pdf_loader import load_sds_pdf
+    from extraction.pipeline import extract_document
+
+    raw_text, metadata = load_sds_pdf(target_path)
+
+    # Optional metadata overrides from form
+    if chemical_name:
+        metadata.chemical_name = chemical_name.strip()
+    if supplier:
+        metadata.supplier = supplier.strip()
+
+    doc = extract_document(raw_text, metadata)
+
+    global _PROCESSED_DOCUMENTS, retriever
+    _PROCESSED_DOCUMENTS.append(doc)
+    retriever = CorpusRetriever(_PROCESSED_DOCUMENTS)
+
+    return DocumentUploadResponse(
+        document_id=metadata.document_id,
+        original_filename=file.filename,
+        chemical_name=metadata.chemical_name,
+        supplier=metadata.supplier,
+        source_path=str(target_path),
+        status="uploaded_and_indexed",
+    )
 
 
 # ============================================================================

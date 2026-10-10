@@ -410,3 +410,14 @@ class AuditLogResponse(BaseModel):
 
     entries: list[AuditLogEntry]
     total: int
+
+
+class DocumentUploadResponse(BaseModel):
+    """Response for POST /corpus/documents."""
+
+    document_id: str
+    original_filename: str
+    chemical_name: str
+    supplier: str
+    source_path: str
+    status: str

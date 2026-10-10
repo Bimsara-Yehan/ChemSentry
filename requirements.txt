@@ -11,6 +11,7 @@
 fastapi==0.141.1
 uvicorn[standard]==0.52.3
 pydantic==2.13.4
+python-multipart==0.0.32  # FastAPI's UploadFile/Form (POST /corpus/documents) needs this at runtime; it's optional for FastAPI itself, so nothing pulls it in transitively -- omitting it passes a local run with it already installed but fails clean CI
 
 # Auth & security
 pyjwt==2.13.0
