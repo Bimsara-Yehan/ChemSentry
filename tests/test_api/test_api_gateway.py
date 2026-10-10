@@ -281,6 +281,19 @@ def test_query_never_asserts_a_safety_verdict():
     data = response.json()
     assert data["evidence"]["final_safety_state"] == "UNKNOWN"
     assert len(data["evidence"]["thresholds"]) > 0  # thresholds were still retrieved
+    assert data["evidence"]["suggested_chemical"] is None
+
+
+def test_query_suggests_but_never_substitutes_a_near_miss_name():
+    """A typo must not come back showing another document's limits under the
+    typed name -- the UI titles results with query.chemical_name."""
+    response = client.post(
+        "/query", json={"chemical_name": "Tolune"}, headers=_analyst_headers()
+    )
+    assert response.status_code == 200
+    evidence = response.json()["evidence"]
+    assert evidence["thresholds"] == []
+    assert evidence["suggested_chemical"] == "Toluene"
 
 
 def test_alert_and_sign_off_are_both_written_to_the_audit_log():

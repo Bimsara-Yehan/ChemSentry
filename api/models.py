@@ -132,6 +132,10 @@ class EvidenceReconciliation(BaseModel):
     thresholds: list[SafetyThreshold]
     conflicts: list[str] = []  # Jaccard conflict notes
     final_safety_state: str  # "SAFE", "WARNING", "UNKNOWN"
+    # "Did you mean ...?" when the query isn't a corpus chemical name but is
+    # close to one. Never accompanied by that chemical's thresholds -- the
+    # person confirms by searching the suggested name (see CorpusRetriever).
+    suggested_chemical: str | None = None
 
 
 # ============================================================================
