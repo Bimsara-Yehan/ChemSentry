@@ -98,32 +98,34 @@ def test_co_storage_check_chemicals_match_inventory():
 
 
 def test_co_storage_check_flags_real_incompatible_pair_in_zone_b():
-    """Zone_B contains Sodium Hydroxide and Sulfuric Acid -- a pair that appears
-    in KNOWN_INCOMPATIBLE_PAIRS with a VIOLENT REACTION note derived from the
-    real corpus (sodium hydroxide SDS Section 10, corpus/raw/).
+    """Zone_B contains Sodium hydroxide and Sulfuric acid -- a pair with a VIOLENT
+    REACTION note in the cited fallback dict (derived from the real sodium hydroxide
+    SDS Section 10, corpus/raw/, SDS [221465]).
 
     This is the core Item 1 requirement: 'Add a test proving a real incompatible
     pair in the current inventory gets flagged.'
 
     Zone_B seed chemicals: Sodium hydroxide, Hydrochloric acid, Sulfuric acid.
-    The CAMEO dict key is frozenset(["Sodium Hydroxide", "Sulfuric Acid"]).
-    The seeded inventory uses 'Sodium hydroxide' (lowercase h) while the CAMEO
-    key uses title-case 'Sodium Hydroxide'. Both spellings appear in the seed
-    data as stored -- if casing ever diverges, this test will fail with an empty
-    rules list and the fix is to align the casing in zone_inventory.py with the
-    keys in apriori_discovery.KNOWN_INCOMPATIBLE_PAIRS.
+    With an empty corpus (no real PDFs in CI) the miner falls back to
+    _CITED_FALLBACK_PAIRS; with the real corpus loaded the SDS data is used
+    directly.  Both paths must produce a VIOLENT REACTION or REACTIVE status.
+    Casing: matching is now case-insensitive after whitespace normalisation
+    (bug 3 fixed), so title-case vs sentence-case no longer matters.
     """
     response = client.get("/zones/Zone_B/co-storage-check", headers=_analyst_token())
     assert response.status_code == 200
     data = response.json()
     rules = data["rules"]
     # Find any rule whose incompatibility_status flags the violent reaction
-    violent_reaction_rules = [
-        r for r in rules if "VIOLENT REACTION" in r["incompatibility_status"]
+    flagged_rules = [
+        r
+        for r in rules
+        if "VIOLENT REACTION" in r["incompatibility_status"]
+        or "REACTIVE" in r["incompatibility_status"]
     ]
-    assert len(violent_reaction_rules) > 0, (
-        "Expected at least one rule flagging VIOLENT REACTION for "
-        "Sodium Hydroxide + Sulfuric Acid in Zone_B, but got no such rule. "
+    assert len(flagged_rules) > 0, (
+        "Expected at least one rule flagging VIOLENT REACTION or REACTIVE for "
+        "Sodium hydroxide + Sulfuric acid in Zone_B, but got no such rule. "
         f"All rules returned: {rules}"
     )
 
@@ -167,6 +169,56 @@ def test_co_storage_check_accessible_to_viewer():
     assert response.status_code == 200
 
 
+def test_co_storage_check_no_rule_is_compatible_in_zone_b():
+    """No rule in Zone_B must ever carry the prefix 'COMPATIBLE'.
+
+    Acceptance criterion: absence of evidence must never be reported as
+    positive compatibility evidence.  Every rule must be REACTIVE, VIOLENT
+    REACTION, REVIEW, or NO KNOWN WARNING.
+    """
+    response = client.get("/zones/Zone_B/co-storage-check", headers=_analyst_token())
+    assert response.status_code == 200
+    rules = response.json()["rules"]
+    for rule in rules:
+        status = rule["incompatibility_status"]
+        assert not status.startswith(
+            "COMPATIBLE"
+        ), f"'COMPATIBLE' prefix must never appear; got: {status!r}"
+
+
+def test_co_storage_check_hcl_naoh_never_compatible():
+    """Hydrochloric acid + Sodium hydroxide must never appear as COMPATIBLE.
+
+    Acceptance criterion (task spec): 'Hydrochloric acid + Sodium hydroxide is
+    never COMPATIBLE (REVIEW or reactive, with citation).'
+
+    With an empty corpus the miner falls back to the cited dict; NaOH + HCl
+    does not appear there but NaOH lists 'Hydrogen halides' which maps to HCl
+    via CHEMICAL_CLASSES, triggering REVIEW.  With a real corpus the SDS data
+    is consulted directly.  In either case the result must not be COMPATIBLE.
+    """
+    response = client.get("/zones/Zone_B/co-storage-check", headers=_analyst_token())
+    assert response.status_code == 200
+    rules = response.json()["rules"]
+    # Find rules that include both Hydrochloric acid and Sodium hydroxide
+    hcl_naoh_rules = [
+        r
+        for r in rules
+        if (
+            "Hydrochloric acid" in r["antecedents"] + r["consequents"]
+            and "Sodium hydroxide" in r["antecedents"] + r["consequents"]
+        )
+    ]
+    for rule in hcl_naoh_rules:
+        status = rule["incompatibility_status"]
+        assert (
+            "COMPATIBLE" not in status
+        ), f"HCl + NaOH must not be COMPATIBLE. Got: {status!r}"
+        assert (
+            "REVIEW" in status or "REACTIVE" in status or "VIOLENT REACTION" in status
+        ), f"Expected REVIEW or REACTIVE for HCl + NaOH. Got: {status!r}"
+
+
 # ---------------------------------------------------------------------------
 # Item 2 -- POST /alerts/{alert_id}/narrate
 # ---------------------------------------------------------------------------
@@ -187,7 +239,9 @@ def _create_warning_alert_and_get_id() -> str:
         headers=headers,
     )
     alerts = client.get("/alerts", headers=headers).json()["alerts"]
-    return alerts[-1]["alert_id"]
+    return alerts[0][
+        "alert_id"
+    ]  # /alerts is newest-first; this is the one just created
 
 
 def test_narrate_alert_returns_200_with_fallback_explanation():
@@ -455,14 +509,18 @@ def test_query_open_registered_tool_get_recent_alerts():
 def test_query_open_registered_tool_check_zone_co_storage():
     """Directly test the registered check_zone_co_storage tool function.
 
-    Proves the tool analyzes Zone_B chemicals and reports the CAMEO violent
-    reaction warning for Sodium hydroxide + Sulfuric acid.
+    Proves the tool analyzes Zone_B chemicals and reports a reactivity warning
+    for Sodium hydroxide + Sulfuric acid.  With an empty corpus the fallback dict
+    produces "VIOLENT REACTION"; with the real corpus loaded the SDS data may
+    produce "REACTIVE" or "VIOLENT REACTION".  Both prefixes are accepted here.
     """
     orchestrator = main._get_query_orchestrator()
     tool_func = orchestrator._tools["check_zone_co_storage"]
 
     result = tool_func(zone_id="Zone_B")
-    assert "VIOLENT REACTION" in result
+    assert (
+        "VIOLENT REACTION" in result or "REACTIVE" in result
+    ), f"Expected VIOLENT REACTION or REACTIVE in Zone_B result, got: {result!r}"
     assert "Sodium hydroxide" in result
     assert "Sulfuric acid" in result
 

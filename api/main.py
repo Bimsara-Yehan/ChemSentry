@@ -11,9 +11,6 @@ Auth flow:
   5. RBAC enforces role-based access (viewer < analyst < admin)
 """
 
-import hashlib
-import os
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -21,12 +18,18 @@ from typing import Optional
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 # Import Agent A retrieval, Agent B & Safety State Machine components
 from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
 
+# Importing these registers AlertRecord/AuditLogRecord/ZoneInventoryRecord on
+# Base.metadata before init_db() runs at startup -- without this import
+# having happened, Base.metadata.create_all() would silently create no
+# tables for them. (ZoneInventoryRecord itself is unused by name here --
+# defined in the same module as AlertRecord, so importing that already
+# registers it -- but seed_default_zone_inventory() below is what actually
+# populates it.)
 from agents.agent_b_analysis.apriori_discovery import CoStoragePatternMiner
 from agents.agent_b_analysis.llm_layer import SafetyCardNarrator
 from agents.agent_b_analysis.query_orchestrator import OpenQueryOrchestrator
@@ -43,6 +46,7 @@ from agents.protocols.schemas import (
 from api.database import (
     SessionLocal,
     check_db_health,
+    check_mqtt_broker_health,
     get_db,
     get_db_schema_info,
     init_db,
@@ -50,14 +54,20 @@ from api.database import (
 from api.db_models import (
     AlertRecord,
     AuditLogRecord,
-    ZoneInventoryRecord,
-    alert_to_dict,
+    UserRecord,
     next_alert_id,
+    next_user_id,
 )
 from api.models import (
+    AddChemicalRequest,
+    AuditLogEntry,
+    AuditLogResponse,
     ChemicalCheckOut,
     CoStorageCheckResponse,
     CoStorageRule,
+    CreateUserRequest,
+    CreateZoneRequest,
+    DocumentUploadResponse,
     HealthCheck,
     NarrateAlertResponse,
     OpenQueryRequest,
@@ -70,6 +80,7 @@ from api.models import (
     TokenResponse,
     UserInfo,
     UserLogin,
+    UserResponse,
     UserRole,
     ZoneStatusResponse,
 )
@@ -79,6 +90,7 @@ from api.security import (
     get_current_user,
     require_role,
 )
+from extraction.models import ProcessedDocument
 from safety.state_machine import DeterministicSafetyEvaluator
 
 # Create FastAPI app
@@ -88,20 +100,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Add CORS middleware (configurable via CHEMSENTRY_CORS_ORIGINS env var)
-cors_origins_env = os.getenv("CHEMSENTRY_CORS_ORIGINS", "")
-if cors_origins_env.strip():
-    origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
-else:
-    origins = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-    ]
-
+# Add CORS middleware (allow frontend to call from different origin during dev)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # Restrict in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -110,23 +112,59 @@ app.add_middleware(
 # Initialize engines
 evaluator = DeterministicSafetyEvaluator()
 
+# Real corpus location -- gitignored (see .gitignore), populated by dropping
+# local SDS PDFs in. A fresh clone or CI checkout has none, which is why
+# _load_retriever() falls back to an empty CorpusRetriever rather than
+# failing: an empty corpus correctly makes every query resolve to nothing,
+# which /safety/evaluate turns into UNKNOWN (see
+# safety/state_machine.py's "no thresholds retrieved" path) -- the honest
+# behaviour per CLAUDE.md, not a fabricated verdict.
 CORPUS_RAW_DIR = Path(__file__).resolve().parent.parent / "corpus" / "raw"
 
 
+_PROCESSED_DOCUMENTS: list[ProcessedDocument] = []
+
+
 def _load_retriever() -> CorpusRetriever:
-    """Build the real Agent A retriever from corpus/raw/ at startup."""
+    """Build the real Agent A retriever from corpus/raw/ at startup.
+
+    Keeps module-level _PROCESSED_DOCUMENTS populated so SDS uploads can extract,
+    append, and rebuild CorpusRetriever(_PROCESSED_DOCUMENTS) in-memory dynamically.
+    """
+    global _PROCESSED_DOCUMENTS
     if CORPUS_RAW_DIR.is_dir() and any(CORPUS_RAW_DIR.glob("*.pdf")):
-        return CorpusRetriever.from_local_pdfs(CORPUS_RAW_DIR)
+        from corpus.pdf_loader import load_all_local_pdfs
+        from extraction.pipeline import extract_document
+
+        _PROCESSED_DOCUMENTS = [
+            extract_document(raw_text, metadata)
+            for raw_text, metadata in load_all_local_pdfs(CORPUS_RAW_DIR)
+        ]
+        return CorpusRetriever(_PROCESSED_DOCUMENTS)
+    _PROCESSED_DOCUMENTS = []
     return CorpusRetriever([])
 
 
 retriever = _load_retriever()
 
+# Called at import time, not only registered as a startup event: FastAPI's
+# on_event("startup") does not fire for a plain `TestClient(app)` unless it's
+# used as a context manager (`with TestClient(app) as client:`), which this
+# project's test suite doesn't do. Relying on the event alone meant tables
+# were only ever created if some earlier test run had already left them on
+# disk -- true locally by accident, false on a fresh clone or in CI, where
+# every /alerts, /admin/sign-off, and WARNING-path /safety/evaluate call
+# failed with "no such table: alerts". create_all() is idempotent, so
+# calling it here and again in the startup event below is harmless.
 init_db()
 
 
 def _seed_zone_inventory() -> None:
-    """Populate Agent C's zone inventory on first run."""
+    """Populate Agent C's zone inventory on first run (idempotent, see
+    seed_default_zone_inventory's docstring) -- same "call at import time,
+    not only the startup event" reasoning as init_db() above: a plain
+    TestClient(app) never fires on_event("startup"), so this must not be
+    the only place it's called."""
     db = SessionLocal()
     try:
         seed_default_zone_inventory(db)
@@ -145,51 +183,65 @@ def _load_zone_inventory() -> dict[str, list[str]]:
         db.close()
 
 
+# Agent C (M4): the real EnvironmentalMonitor -- holds no chemical knowledge
+# of its own, only which chemicals are in which zone (see
+# agents/agent_c_environment/monitor.py's module docstring).
 zone_inventory = _load_zone_inventory()
 
 
 def _get_environmental_monitor() -> EnvironmentalMonitor:
+    """Construct the monitor fresh from the current module-level `retriever`
+    on every call, rather than capturing it once at import time.
+
+    Mirrors how every other route already reads the module-level `retriever`
+    global at call time, not at import time -- tests override `main.retriever`
+    with a small fixture corpus after this module has already been imported
+    (see tests/test_api/test_api_gateway.py); a `retriever` captured once in
+    a module-level `EnvironmentalMonitor` would never see that override.
+    Construction itself is cheap (no I/O, just storing references).
+    """
     return EnvironmentalMonitor(retriever, evaluator, zone_inventory)
 
 
-# Ephemeral instrument-state caches
+# Ephemeral instrument-state caches, deliberately NOT persisted to the DB --
+# unlike AlertRecord/AuditLogRecord (audit-critical, append-only), "what did
+# the sensor last read" is not a decision that needs a durable record; only
+# the alerts an excursion produces are. Rebuilt from scratch on every
+# process restart via _seed_initial_zone_readings() below.
 _LATEST_ZONE_EVALUATIONS: dict[str, ZoneEvaluation] = {}
 _LAST_ALERT_TIMESTAMP: dict[str, datetime] = {}
 
 
+def _seed_initial_zone_readings() -> None:
+    """Give every inventoried zone one evaluated ambient reading at startup,
+    so GET /zones has real data (from the real retrieval + safety-evaluation
+    pipeline) to show immediately -- rather than requiring the simulator to
+    have already published something first."""
+    monitor = _get_environmental_monitor()
+    for zone_id in zone_inventory:
+        reading = SensorReading(
+            zone_id=zone_id,
+            temperature_celsius=20.0,
+            humidity_percent=45.0,
+            timestamp=datetime.now(timezone.utc),
+            device_id="startup-default",
+        )
+        _LATEST_ZONE_EVALUATIONS[zone_id] = monitor.handle_reading(reading)
+
+
+_seed_initial_zone_readings()
+
+
 def _zone_status_response(zone_id: str) -> ZoneStatusResponse:
     """Build the API-facing view of a zone from its latest evaluation."""
-    evaluation = _LATEST_ZONE_EVALUATIONS.get(zone_id)
-    chems = zone_inventory.get(zone_id, [])
-    if evaluation is None or evaluation.reading is None:
-        return ZoneStatusResponse(
-            zone_id=zone_id,
-            last_reading=None,
-            is_excursion=False,
-            safety_state="UNKNOWN",
-            last_alert_timestamp=_LAST_ALERT_TIMESTAMP.get(zone_id),
-            chemicals=chems,
-            checks=[
-                ChemicalCheckOut(
-                    chemical_name=chem,
-                    metric_name="temperature_celsius",
-                    state="UNKNOWN",
-                    current_value=0.0,
-                    threshold_value=None,
-                    reasoning="No sensor reading received yet for this zone.",
-                    citation=None,
-                )
-                for chem in chems
-            ],
-        )
-
+    evaluation = _LATEST_ZONE_EVALUATIONS[zone_id]
     return ZoneStatusResponse(
         zone_id=zone_id,
         last_reading=evaluation.reading,
         is_excursion=evaluation.is_excursion,
         safety_state=evaluation.aggregated_state.value,
         last_alert_timestamp=_LAST_ALERT_TIMESTAMP.get(zone_id),
-        chemicals=chems,
+        chemicals=zone_inventory.get(zone_id, []),
         checks=[
             ChemicalCheckOut(
                 chemical_name=c.chemical_name,
@@ -230,7 +282,7 @@ async def startup_event():
 
 
 @app.post("/auth/login", response_model=TokenResponse)
-async def login(credentials: UserLogin):
+async def login(credentials: UserLogin, db: Session = Depends(get_db)):
     """Login with username/password, receive JWT token.
 
     Demo users (for testing):
@@ -238,7 +290,7 @@ async def login(credentials: UserLogin):
     - analyst_user / analyst123 (ANALYST role)
     - admin_user / admin123 (ADMIN role)
     """
-    result = authenticate_user(credentials.username, credentials.password)
+    result = authenticate_user(credentials.username, credentials.password, db=db)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -260,8 +312,8 @@ async def login(credentials: UserLogin):
 async def health_check(db: Session = Depends(get_db)):
     """Health check — verify API, database, and MQTT broker status."""
     db_status = check_db_health()
-    mqtt_status = "ok"
-    overall_status = "ok" if db_status == "ok" else "degraded"
+    mqtt_status = check_mqtt_broker_health()
+    overall_status = "ok" if db_status == "ok" and mqtt_status == "ok" else "degraded"
 
     return HealthCheck(
         status=overall_status,
@@ -371,6 +423,12 @@ async def query_chemical(
 
     thresholds_list = retriever.get_thresholds(request.chemical_name)
 
+    # Thresholds come only from an exact name match. A near-miss is offered
+    # as a suggestion instead of being searched on the user's behalf, so
+    # "Methanol" can't come back showing Ethanol's limits under its name.
+    match = retriever.resolve_name(request.chemical_name)
+    suggested_chemical = match.term if match and match.stage != "exact" else None
+
     threshold_dicts = [
         {
             "parameter": t.metric_name,
@@ -400,6 +458,7 @@ async def query_chemical(
             "thresholds": threshold_dicts,
             "conflicts": [],
             "final_safety_state": "UNKNOWN",
+            "suggested_chemical": suggested_chemical,
         },
     )
 
@@ -507,8 +566,12 @@ async def submit_zone_telemetry(
 async def list_alerts(
     user: UserInfo = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    """List all safety alerts in review queue (for Supervisor Dashboard)."""
-    alerts = db.query(AlertRecord).order_by(AlertRecord.id).all()
+    """List all safety alerts in review queue (for Supervisor Dashboard).
+
+    Newest first -- a supervisor working the queue needs the most recent
+    excursion visible without scrolling past the full history first.
+    """
+    alerts = db.query(AlertRecord).order_by(AlertRecord.id.desc()).all()
     return {"alerts": [alert.to_dict() for alert in alerts]}
 
 
@@ -593,7 +656,14 @@ async def co_storage_check(
     # are both present in the requested zone.
     all_transactions: list[list[str]] = list(zone_inventory.values())
 
-    miner = CoStoragePatternMiner(min_support=0.2, min_threshold_lift=1.0)
+    # Pass the already-loaded processed documents so the SDS Section 10
+    # incompatibility lookup uses real extracted claims rather than the
+    # hand-written fallback dict (see apriori_discovery._check_pair_against_sds).
+    miner = CoStoragePatternMiner(
+        min_support=0.2,
+        min_threshold_lift=1.0,
+        documents=_PROCESSED_DOCUMENTS,
+    )
     raw_rules = miner.discover_co_storage_rules(all_transactions)
 
     zone_chemical_set = set(zone_chemicals)
@@ -875,7 +945,11 @@ def _get_query_orchestrator() -> OpenQueryOrchestrator:
         if zone_id not in current_inv:
             return f"Zone '{zone_id}' not found in inventory."
         transactions = [chemicals for chemicals in current_inv.values() if chemicals]
-        miner = CoStoragePatternMiner(min_support=0.01, min_threshold_lift=0.0)
+        miner = CoStoragePatternMiner(
+            min_support=0.01,
+            min_threshold_lift=0.0,
+            documents=_PROCESSED_DOCUMENTS,
+        )
         rules = miner.discover_co_storage_rules(transactions)
         zone_chems = set(current_inv[zone_id])
         zone_rules = [
@@ -941,6 +1015,328 @@ async def query_open(
         query=req.query,
         response=answer,
         tools_registered=list(orchestrator._tools.keys()),
+    )
+
+
+# ============================================================================
+# User Management Routes (M4)
+# ============================================================================
+
+
+@app.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    payload: CreateUserRequest,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Create a new real user account (ADMIN only).
+
+    Demo accounts (viewer_user, analyst_user, admin_user) continue to work
+    via fallback in api/security.py.
+    """
+    existing = (
+        db.query(UserRecord).filter(UserRecord.username == payload.username).first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Username '{payload.username}' is already taken.",
+        )
+
+    from api.security import hash_password
+
+    user_id = next_user_id(db)
+    new_user = UserRecord(
+        user_id=user_id,
+        username=payload.username,
+        password_hash=hash_password(payload.password),
+        role=payload.role.value,
+        is_active=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return UserResponse(**new_user.to_dict())
+
+
+@app.get("/users", response_model=list[UserResponse])
+async def list_users(
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """List all real user accounts (ADMIN only)."""
+    users = db.query(UserRecord).order_by(UserRecord.id).all()
+    return [UserResponse(**u.to_dict()) for u in users]
+
+
+# ============================================================================
+# Zone Management Routes (M4)
+# ============================================================================
+
+
+@app.post("/zones", status_code=status.HTTP_201_CREATED)
+async def create_zone(
+    payload: CreateZoneRequest,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Create a new monitored zone and seed its chemical inventory (ADMIN only)."""
+    if payload.zone_id in zone_inventory:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Zone '{payload.zone_id}' already exists.",
+        )
+
+    from api.db_models import ZoneInventoryRecord
+
+    for chemical_name in payload.chemicals:
+        db.add(
+            ZoneInventoryRecord(zone_id=payload.zone_id, chemical_name=chemical_name)
+        )
+    db.commit()
+
+    zone_inventory[payload.zone_id] = list(payload.chemicals)
+
+    monitor = _get_environmental_monitor()
+    reading = SensorReading(
+        zone_id=payload.zone_id,
+        temperature_celsius=20.0,
+        humidity_percent=45.0,
+        timestamp=datetime.now(timezone.utc),
+        device_id="zone-create-default",
+    )
+    _LATEST_ZONE_EVALUATIONS[payload.zone_id] = monitor.handle_reading(reading)
+
+    return {
+        "zone_id": payload.zone_id,
+        "chemicals": zone_inventory[payload.zone_id],
+        "status": "created",
+    }
+
+
+@app.post("/zones/{zone_id}/chemicals", status_code=status.HTTP_201_CREATED)
+async def add_chemical_to_zone(
+    zone_id: str,
+    payload: AddChemicalRequest,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Add a chemical to an existing zone's inventory (ADMIN only)."""
+    if zone_id not in zone_inventory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Zone '{zone_id}' not found.",
+        )
+    if payload.chemical_name in zone_inventory[zone_id]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{payload.chemical_name}' is already in zone '{zone_id}'.",
+        )
+
+    from api.db_models import ZoneInventoryRecord
+
+    db.add(ZoneInventoryRecord(zone_id=zone_id, chemical_name=payload.chemical_name))
+    db.commit()
+
+    zone_inventory[zone_id].append(payload.chemical_name)
+
+    return {
+        "zone_id": zone_id,
+        "chemicals": zone_inventory[zone_id],
+        "status": "chemical_added",
+    }
+
+
+@app.delete(
+    "/zones/{zone_id}/chemicals/{chemical_name}", status_code=status.HTTP_200_OK
+)
+async def remove_chemical_from_zone(
+    zone_id: str,
+    chemical_name: str,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Remove a chemical from a zone's inventory (ADMIN only)."""
+    if zone_id not in zone_inventory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Zone '{zone_id}' not found.",
+        )
+    if chemical_name not in zone_inventory[zone_id]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"'{chemical_name}' is not in zone '{zone_id}'.",
+        )
+
+    from api.db_models import ZoneInventoryRecord
+
+    row = (
+        db.query(ZoneInventoryRecord)
+        .filter(
+            ZoneInventoryRecord.zone_id == zone_id,
+            ZoneInventoryRecord.chemical_name == chemical_name,
+        )
+        .first()
+    )
+    if row:
+        db.delete(row)
+        db.commit()
+
+    zone_inventory[zone_id].remove(chemical_name)
+
+    return {
+        "zone_id": zone_id,
+        "chemicals": zone_inventory[zone_id],
+        "status": "chemical_removed",
+    }
+
+
+# ============================================================================
+# Audit Log Route (M4)
+# ============================================================================
+
+
+@app.get("/audit-log", response_model=AuditLogResponse)
+async def get_audit_log(
+    limit: int = 100,
+    offset: int = 0,
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Return the audit log, newest-first, paginated (ADMIN only)."""
+    total = db.query(AuditLogRecord).count()
+    rows = (
+        db.query(AuditLogRecord)
+        .order_by(AuditLogRecord.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    entries = [
+        AuditLogEntry(
+            id=row.id,
+            action=row.action,
+            user_id=row.user_id,
+            resource=row.resource,
+            details=row.details,
+            timestamp=row.timestamp,
+        )
+        for row in rows
+    ]
+    return AuditLogResponse(entries=entries, total=total)
+
+
+# ============================================================================
+# SDS Document Upload Route (M4)
+# ============================================================================
+
+
+@app.post(
+    "/corpus/documents",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_sds_document(
+    file: UploadFile = File(...),
+    chemical_name: Optional[str] = Form(None),
+    supplier: Optional[str] = Form(None),
+    admin: UserInfo = Depends(require_role(UserRole.ADMIN)),
+):
+    """Upload a new Safety Data Sheet (SDS) PDF to the corpus (ADMIN only).
+
+    Problem solved: SDS acquisition is an ongoing operational requirement.
+    Previously, SDS PDFs were placed manually into `corpus/raw/` on disk and
+    loaded at server startup -- there was no dynamic API endpoint for safety
+    officers to upload new supplier sheets at runtime.
+
+    Why this technique:
+    1. The saved filename is a fresh UUID4, never the admin-supplied
+       `file.filename` -- corpus/crawler/storage.py's resolve_output_path()
+       (already covered by that module's own path-traversal test suite) is
+       reused to turn it into a path, so a filename like `../../evil.pdf`
+       can never write outside corpus/raw/, and two uploads can never
+       collide on disk. The original filename is kept only for display, in
+       the response, never as a path component.
+    2. Magic-byte check (`%PDF-`) before trusting the upload is a PDF at
+       all -- a `.pdf`-named file can contain anything; the extension alone
+       proves nothing. Write is atomic (temp file + rename) so a failed
+       upload never leaves a partial file that looks real.
+    3. Persists to `corpus/raw/` so it survives server restarts, matching
+       the project's disk-backed corpus strategy (`.gitignore` excludes
+       `corpus/raw/*` except `.gitkeep`).
+    4. Extract raw text via `corpus.pdf_loader.load_sds_pdf()`, which parses
+       Section 1 metadata (chemical name, supplier, CAS) and -- since
+       `document_id` is derived from the path's stem -- picks up the same
+       safe UUID as the document's id.
+    5. Allows optional form field overrides (`chemical_name`, `supplier`) if
+       supplied by admin, persisted beside the PDF as `<id>.meta.json` so a
+       restart (which rebuilds the corpus from disk) doesn't discard them.
+    6. Transforms raw text to `ProcessedDocument` via `extraction.pipeline.extract_document()`.
+    7. Appends the document to `_PROCESSED_DOCUMENTS` and re-instantiates `retriever` global
+       in-memory so every downstream route (`/query`, `/safety/evaluate`, telemetry)
+       immediately resolves thresholds from the newly uploaded SDS without restarting.
+    """
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a valid PDF document (.pdf).",
+        )
+
+    contents = await file.read()
+    if not contents.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is not a valid PDF (missing %PDF- header).",
+        )
+
+    from uuid import uuid4
+
+    from corpus.crawler.storage import UnsafePathError, resolve_output_path
+    from corpus.pdf_loader import MAX_OVERRIDE_LENGTH, write_metadata_overrides
+
+    overrides = {"chemical_name": chemical_name or "", "supplier": supplier or ""}
+    if any(len(v.strip()) > MAX_OVERRIDE_LENGTH for v in overrides.values()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Chemical name and supplier must be at most {MAX_OVERRIDE_LENGTH} characters.",
+        )
+
+    CORPUS_RAW_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        target_path = resolve_output_path(CORPUS_RAW_DIR, uuid4().hex)
+    except UnsafePathError as exc:  # pragma: no cover - uuid4().hex is always safe
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not compute a safe storage path: {exc}",
+        ) from exc
+
+    tmp_path = target_path.with_name(target_path.name + ".part")
+    tmp_path.write_bytes(contents)
+    tmp_path.replace(target_path)
+
+    # Saved beside the PDF (not just applied in memory) so the override
+    # survives the corpus being rebuilt from disk on restart; load_sds_pdf()
+    # applies it on this call and on every startup alike.
+    write_metadata_overrides(target_path, overrides)
+
+    from corpus.pdf_loader import load_sds_pdf
+    from extraction.pipeline import extract_document
+
+    raw_text, metadata = load_sds_pdf(target_path)
+    doc = extract_document(raw_text, metadata)
+
+    global _PROCESSED_DOCUMENTS, retriever
+    _PROCESSED_DOCUMENTS.append(doc)
+    retriever = CorpusRetriever(_PROCESSED_DOCUMENTS)
+
+    return DocumentUploadResponse(
+        document_id=metadata.document_id,
+        original_filename=file.filename,
+        chemical_name=metadata.chemical_name,
+        supplier=metadata.supplier,
+        source_path=str(target_path),
+        status="uploaded_and_indexed",
     )
 
 

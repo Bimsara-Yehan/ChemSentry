@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 import signal
 import sys
+import threading
 
 from extraction.models import (
     ClaimType,
@@ -59,7 +60,14 @@ def _regex_findall_safe(
 
     On Windows, signal.SIGALRM is not available, so we fall back to
     running without a hard timeout but with bounded patterns.
-    On Unix, uses SIGALRM for a hard time limit.
+    On Unix, uses SIGALRM for a hard time limit -- but only when called
+    from the main thread of the main interpreter, since signal.signal()
+    raises ValueError otherwise. extract_document() can run inside an
+    async endpoint (api/main.py's upload_sds_document), and ASGI test
+    clients execute async handlers on a background event-loop thread, not
+    the main thread, so this path is reachable in practice, not just in
+    theory. We fall back to the same bounded-pattern path Windows uses
+    rather than crash the request.
 
     Args:
         pattern: Compiled regex pattern (should use bounded quantifiers).
@@ -70,9 +78,14 @@ def _regex_findall_safe(
         List of Match objects found.
 
     Raises:
-        RegexTimeoutError: If the regex exceeds the timeout (Unix only).
+        RegexTimeoutError: If the regex exceeds the timeout (main thread,
+            Unix only).
     """
-    if sys.platform != "win32" and hasattr(signal, "SIGALRM"):
+    if (
+        sys.platform != "win32"
+        and hasattr(signal, "SIGALRM")
+        and threading.current_thread() is threading.main_thread()
+    ):
 
         def _handler(signum, frame):
             raise RegexTimeoutError(
@@ -151,19 +164,28 @@ def _normalise_numeric_string(raw: str) -> str:
 # Extraction patterns — all use BOUNDED quantifiers
 # ---------------------------------------------------------------------------
 
-# Storage temperature maximum: "store below 25 °C", "keep under 30°C"
+# Degree sign as real SDS PDFs actually encode it: "°" (U+00B0) normally, but
+# PanReac/ITW SDSs use the masculine ordinal "º" (U+00BA) -- e.g. their
+# 2-Propanol SDS reads "Minimum storage temperature:> 2ºC". Treating only
+# "°" as a degree sign silently drops that real limit.
+_DEG = "[°º]?"
+
+# Storage temperature maximum: "store below 25 °C", "keep under 30°C", and
+# PanReac's symbol-only form "Recommended storage temperature:< +25°C" (bare
+# "<" and an explicit "+" sign, confirmed in a real PanReac 2-Propanol SDS).
 _STORAGE_TEMP_MAX_RE = re.compile(
     r"(?:store|keep|storage).{0,60}?"
-    rf"(?:below|under|not\s+(?:above|exceed)|max(?:imum)?|≤|<=)\s*"
-    rf"({_NUM})\s*°?\s*([CF])",
+    rf"(?:below|under|not\s+(?:above|exceed)|max(?:imum)?|≤|<=|<)\s*\+?"
+    rf"({_NUM})\s*{_DEG}\s*([CF])",
     re.IGNORECASE,
 )
 
-# Storage temperature minimum: "store above 5 °C", "keep above freezing"
+# Storage temperature minimum: "store above 5 °C", "keep above freezing", and
+# PanReac's "Minimum storage temperature:> 2ºC".
 _STORAGE_TEMP_MIN_RE = re.compile(
     r"(?:store|keep|storage).{0,60}?"
-    rf"(?:above|over|min(?:imum)?|≥|>=)\s*"
-    rf"({_NUM})\s*°?\s*([CF])",
+    rf"(?:above|over|min(?:imum)?|≥|>=|>)\s*\+?"
+    rf"({_NUM})\s*{_DEG}\s*([CF])",
     re.IGNORECASE,
 )
 
@@ -175,7 +197,7 @@ _STORAGE_TEMP_MIN_RE = re.compile(
 # Captures an optional range (min, max) or a single ceiling value.
 _STORAGE_TEMP_LABEL_RE = re.compile(
     rf"storage(?:\s+temperature)?\s*:\s*"
-    rf"({_NUM})\s*(?:[-–]\s*({_NUM}))?\s*°?\s*([CF])"
+    rf"\+?({_NUM})\s*(?:[-–]\s*\+?({_NUM}))?\s*{_DEG}\s*([CF])"
     r"(?:\s*\n\s*temperature\b)?",
     re.IGNORECASE,
 )
@@ -227,19 +249,49 @@ _PPE_MATERIAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A single value or a range ("12-13", "100 - 101"), for physical properties
+# whose SDS entry may be either. Without the optional range, a real
+# 2-Propanol SDS's "Flash point: 12-13 °C" matched as -13 °C: "12" isn't
+# followed by a unit, so the regex backtracked onto "-13" and read the range
+# dash as a minus sign. The lookbehind stops a sign being taken from a dash
+# that directly follows a digit, in case a range shape this misses.
+_VALUE_OR_RANGE = rf"(?<![\d.,])({_NUM})(?:\s*[-–]\s*({_NUM}))?"
+
 # Flash point: "Flash point: 4 °C" (real corpus: often negative, e.g. "-17,0 °C" --
 # see the module-level comment above _NUM for why the number group must
-# support a leading sign and a comma decimal)
+# support a leading sign and a comma decimal), or a range "12-13 °C".
 _FLASH_POINT_RE = re.compile(
-    rf"(?:flash\s*point).{{0,30}}?" rf"({_NUM})\s*°?\s*([CF])",
+    rf"(?:flash\s*point).{{0,30}}?{_VALUE_OR_RANGE}\s*{_DEG}\s*([CF])",
     re.IGNORECASE,
 )
 
-# Boiling point: "Boiling point: 111 °C"
+# Boiling point: "Boiling point: 111 °C", or a range "100 - 101 °C".
 _BOILING_POINT_RE = re.compile(
-    rf"(?:boiling\s*point).{{0,30}}?" rf"({_NUM})\s*°?\s*([CF])",
+    rf"(?:boiling\s*point).{{0,30}}?{_VALUE_OR_RANGE}\s*{_DEG}\s*([CF])",
     re.IGNORECASE,
 )
+
+
+def _lower_bound(low: str, high: str | None) -> str:
+    """Pick the value to report for a flash/boiling point that may be a range.
+
+    The safety layer raises WARNING when a reading exceeds either property,
+    so the range's lower end is the conservative limit: reporting the upper
+    end would let a reading inside the range pass as SAFE. The full range
+    stays visible in original_text_span for the citation.
+
+    Args:
+        low: First number as matched.
+        high: Second number as matched, or None for a single value.
+
+    Returns:
+        Canonical numeric string of the smaller value.
+    """
+    values = [_normalise_numeric_string(low)]
+    if high is not None:
+        values.append(_normalise_numeric_string(high))
+    return min(values, key=float)
+
 
 # Incompatible materials: "Incompatible with strong oxidizers, acids".
 #
@@ -605,8 +657,8 @@ def extract_flash_point(
             _make_result(
                 chemical=chemical,
                 claim_type=ClaimType.FLASH_POINT,
-                value=_normalise_numeric_string(match.group(1)),
-                unit=f"°{match.group(2).upper()}",
+                value=_lower_bound(match.group(1), match.group(2)),
+                unit=f"°{match.group(3).upper()}",
                 section_number=section_number,
                 original_text_span=match.group(0),
                 confidence=0.90,
@@ -628,8 +680,8 @@ def extract_boiling_point(
             _make_result(
                 chemical=chemical,
                 claim_type=ClaimType.BOILING_POINT,
-                value=_normalise_numeric_string(match.group(1)),
-                unit=f"°{match.group(2).upper()}",
+                value=_lower_bound(match.group(1), match.group(2)),
+                unit=f"°{match.group(3).upper()}",
                 section_number=section_number,
                 original_text_span=match.group(0),
                 confidence=0.90,

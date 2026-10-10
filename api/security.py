@@ -336,17 +336,42 @@ def _get_demo_users():
     return _DEMO_USERS_CACHE
 
 
-def authenticate_user(username: str, password: str) -> Optional[tuple[str, UserRole]]:
+def authenticate_user(
+    username: str,
+    password: str,
+    db=None,
+) -> Optional[tuple[str, UserRole]]:
     """Authenticate user by username/password.
 
-    Demo accounts are only allowed in development mode. In production mode
-    (CHEMSENTRY_ENV=production), fallback to demo accounts is strictly disabled.
+    Resolution order (DB-first, fallback to demo users):
+      1. If `db` session is supplied, check the `UserRecord` ORM table.
+      2. If not found in DB (or table does not exist yet), fall back to demo users.
+
+    Note: Exception handling is specifically narrowed to (OperationalError, ProgrammingError)
+    so table non-existence falls back safely to demo users, while security errors like
+    DecryptionError propagate as intended (ADR 0004).
 
     Returns:
         (user_id, role) if authenticated, None otherwise
     """
-    if _is_production():
-        return None
+    if db is not None:
+        from sqlalchemy.exc import OperationalError, ProgrammingError
+
+        from api.db_models import UserRecord  # noqa: PLC0415
+
+        try:
+            db_user = (
+                db.query(UserRecord).filter(UserRecord.username == username).first()
+            )
+            if db_user:
+                if not db_user.is_active:
+                    return None
+                if verify_password(password, db_user.password_hash):
+                    return db_user.user_id, UserRole(db_user.role)
+                return None
+        except (OperationalError, ProgrammingError):
+            # Table does not exist yet; fall back to demo users
+            pass
 
     demo_users = _get_demo_users()
     if username not in demo_users:

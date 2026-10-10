@@ -2,7 +2,7 @@ scenario_id,chemical_name,zone_id,metric_name,current_value,unit,expected_state,
 E001,citric acid,Zone_A,max_storage_temperature,20.0,C,SAFE,real threshold max=25.0C; 20 is clearly below it
 E002,citric acid,Zone_A,min_storage_temperature,20.0,C,SAFE,real threshold min=15.0C; 20 is clearly above it
 E003,hydrogen peroxide solution,Zone_A,max_storage_temperature,5.0,C,SAFE,real threshold max=8.0C; 5 is clearly below it
-E004,ethanol,Zone_A,flash_point,5.0,C,SAFE,real flash point=13.0C; 5 is well below (not approaching ignition risk)
+E004,ethanol,Zone_A,flash_point,5.0,C,UNKNOWN,real equal-authority conflict: flash point 13.0C (Sigma-Aldrich) vs 12.0C (Carl Roth) -- 7.7% apart; beyond the 5% tolerance -- reconciler refuses to pick one
 E005,ethanol,Zone_A,boiling_point,40.0,C,SAFE,real boiling point=78.0C; 40 is clearly below it
 E006,citric acid,Zone_A,max_storage_temperature,30.0,C,WARNING,real threshold max=25.0C; 30 exceeds it
 E007,citric acid,Zone_A,min_storage_temperature,10.0,C,WARNING,real threshold min=15.0C; 10 is at/below it
@@ -14,3 +14,4 @@ E012,toluene,Zone_A,max_storage_temperature,25.0,C,UNKNOWN,chemical is not in th
 E013,citric acid,Zone_A,max_storage_temperature,20.0,F,UNKNOWN,real threshold exists (25.0C) but request unit (F) does not match -- state machine refuses to assume a conversion
 E014,zinc oxide,Zone_A,flash_point,25.0,C,UNKNOWN,real corpus document for this chemical has no flash point extracted
 E015,urea,Zone_A,boiling_point,25.0,C,UNKNOWN,real corpus document for this chemical has no boiling point extracted
+E017,formic acid,Zone_A,flash_point,20.0,C,SAFE,real flash point=45.0C (single source); 20 is well below it

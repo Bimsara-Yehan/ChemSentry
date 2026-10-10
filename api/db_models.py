@@ -15,11 +15,41 @@ registered on `Base.metadata`), which `api/main.py` does at import time.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped
 
 from api.crypto import EncryptedJSON, EncryptedText
 from api.database import Base
+
+
+class UserRecord(Base):
+    """Real user account table for authentication and RBAC (M4).
+
+    Encryption at rest (api/crypto.py, ADR 0004): password_hash is stored as
+    EncryptedText. Plaintext columns (username, role, created_at, is_active)
+    stay unencrypted so they can be queried and filtered efficiently.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = Column(String, unique=True, nullable=False, index=True)
+    username: Mapped[str] = Column(String, unique=True, nullable=False, index=True)
+    password_hash: Mapped[str] = Column(EncryptedText, nullable=False)
+    role: Mapped[str] = Column(String, nullable=False, default="viewer")
+    is_active: Mapped[bool] = Column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "user_id": self.user_id,
+            "username": self.username,
+            "role": self.role,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
 
 
 class AlertRecord(Base):
@@ -166,3 +196,9 @@ class ZoneInventoryRecord(Base):
     id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
     zone_id: Mapped[str] = Column(String, nullable=False, index=True)
     chemical_name: Mapped[str] = Column(String, nullable=False)
+
+
+def next_user_id(db) -> str:
+    """Generate next user_id (USR_0001, USR_0002, ...)."""
+    count = db.query(UserRecord).count()
+    return f"USR_{count + 1:04d}"

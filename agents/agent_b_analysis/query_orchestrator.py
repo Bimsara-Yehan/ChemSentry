@@ -25,7 +25,7 @@ class OpenQueryOrchestrator:
     def __init__(self, api_key: str | None = None):
         """Initializes orchestrator with client and tool mapping."""
         self.api_key = api_key or os.getenv("MISTRAL_API_KEY")
-        self.model = "mistral-small-latest"
+        self.model = os.getenv("MISTRAL_MODEL", "open-mistral-nemo")
         self._tools: dict[str, Callable] = {}
         self._tool_definitions: list[dict[str, Any]] = []
 

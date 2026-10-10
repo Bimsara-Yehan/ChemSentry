@@ -132,6 +132,10 @@ class EvidenceReconciliation(BaseModel):
     thresholds: list[SafetyThreshold]
     conflicts: list[str] = []  # Jaccard conflict notes
     final_safety_state: str  # "SAFE", "WARNING", "UNKNOWN"
+    # "Did you mean ...?" when the query isn't a corpus chemical name but is
+    # close to one. Never accompanied by that chemical's thresholds -- the
+    # person confirms by searching the suggested name (see CorpusRetriever).
+    suggested_chemical: str | None = None
 
 
 # ============================================================================
@@ -235,7 +239,9 @@ class CoStorageRule(BaseModel):
     support: float
     confidence: float
     lift: float
-    incompatibility_status: str  # e.g. "REACTIVE: ..." or "COMPATIBLE: ..."
+    incompatibility_status: (
+        str  # e.g. "REACTIVE: ...", "REVIEW: ...", or "NO KNOWN WARNING: ..."
+    )
 
 
 class CoStorageCheckResponse(BaseModel):
@@ -356,3 +362,68 @@ class OpenQueryResponse(BaseModel):
     query: str
     response: str
     tools_registered: list[str]
+
+
+# ============================================================================
+# Admin Management Endpoints (M4)
+# ============================================================================
+
+
+class CreateUserRequest(BaseModel):
+    """Request body for POST /users."""
+
+    username: str
+    password: str
+    role: UserRole = UserRole.ANALYST
+
+
+class UserResponse(BaseModel):
+    """Response body for user objects."""
+
+    user_id: str
+    username: str
+    role: str
+    is_active: bool
+    created_at: Optional[str] = None
+
+
+class CreateZoneRequest(BaseModel):
+    """Request body for POST /zones."""
+
+    zone_id: str
+    chemicals: list[str] = []
+
+
+class AddChemicalRequest(BaseModel):
+    """Request body for POST /zones/{zone_id}/chemicals."""
+
+    chemical_name: str
+
+
+class AuditLogEntry(BaseModel):
+    """One record in the compliance audit log."""
+
+    id: int
+    action: str
+    user_id: str
+    resource: str
+    details: dict
+    timestamp: datetime
+
+
+class AuditLogResponse(BaseModel):
+    """Response for GET /audit-log."""
+
+    entries: list[AuditLogEntry]
+    total: int
+
+
+class DocumentUploadResponse(BaseModel):
+    """Response for POST /corpus/documents."""
+
+    document_id: str
+    original_filename: str
+    chemical_name: str
+    supplier: str
+    source_path: str
+    status: str

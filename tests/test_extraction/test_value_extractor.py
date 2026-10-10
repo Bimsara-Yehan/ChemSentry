@@ -7,8 +7,13 @@ these snippets are inlined here to keep the tests runnable in CI without the
 source documents.
 """
 
+import re
+import threading
+
+from extraction import value_extractor
 from extraction.value_extractor import (
     _normalise_numeric_string,
+    _regex_findall_safe,
     extract_boiling_point,
     extract_cas_numbers,
     extract_flash_point,
@@ -58,6 +63,39 @@ def test_storage_temp_label_range_conventional() -> None:
 
     assert by_claim["storage_temperature_min"] == "15"
     assert by_claim["storage_temperature_max"] == "25"
+
+
+def test_storage_temp_panreac_symbol_comparators() -> None:
+    """Verbatim pdfplumber output from a real PanReac (ITW Reagents) 2-Propanol
+    SDS, Section 7.2: bare "<"/">" comparators, an explicit "+" sign, and the
+    minimum written with "º" (U+00BA, masculine ordinal) instead of "°".
+    Before the fix none of these were recognised and the limits were lost."""
+    text = (
+        "\xb7 Minimum storage temperature:> 2\xbaC\n"
+        "\xb7 Recommended storage temperature:< +25\xb0C\n"
+    )
+    results = extract_storage_temp(text, chemical="2-Propanol")
+    by_claim = {r.claim_type.value: r.value for r in results}
+
+    assert by_claim == {"storage_temperature_min": "2", "storage_temperature_max": "25"}
+
+
+def test_storage_temp_carl_roth_en_dash_range() -> None:
+    """Verbatim from a real Carl Roth Ethanol SDS (article 9065), Section 7."""
+    text = "Recommended storage temperature: 15 – 25 \xb0C."
+    results = extract_storage_temp(text, chemical="Ethanol")
+    by_claim = {r.claim_type.value: r.value for r in results}
+
+    assert by_claim["storage_temperature_min"] == "15"
+    assert by_claim["storage_temperature_max"] == "25"
+
+
+def test_storage_temp_room_temperature_wording_yields_nothing() -> None:
+    """Verbatim from a real PanReac potassium permanganate SDS. "Room
+    Temperature" is not a number; extracting anything here would invent a
+    threshold the source document never states."""
+    text = "\xb7 Recommended storage temperature:Room Temperature\n\xb7 Storage class: 5.1 B"
+    assert extract_storage_temp(text, chemical="Potassium permanganate") == []
 
 
 def test_storage_temp_label_wrapped_across_lines() -> None:
@@ -204,3 +242,113 @@ def test_boiling_point_still_extracts_plain_values_correctly() -> None:
 
     assert len(results) == 1
     assert results[0].value == "56"
+
+
+def test_flash_point_range_is_not_read_as_a_negative_value() -> None:
+    """The real 2-Propanol SDS case: the range dash was read as a minus
+    sign, giving -13 C. The lower end is reported, the range stays cited."""
+    text = "Flash point: 12-13 \xb0C"
+    results = extract_flash_point(text, chemical="2-Propanol")
+
+    assert len(results) == 1
+    assert results[0].value == "12"
+    assert "12-13" in results[0].original_text_span
+
+
+def test_boiling_point_range_reports_the_conservative_lower_end() -> None:
+    """The real formic acid case: "100 - 101" used to give the upper end.
+    A reading above the lower end is already inside the boiling range."""
+    text = "Boiling point/boiling range : 100 - 101 \xb0C"
+    results = extract_boiling_point(text, chemical="Formic acid")
+
+    assert len(results) == 1
+    assert results[0].value == "100"
+
+
+def test_flash_point_range_handles_negative_and_comma_values() -> None:
+    text = "Flash point : -20,5 – -18 \xb0C"
+    results = extract_flash_point(text, chemical="Test")
+
+    assert len(results) == 1
+    assert results[0].value == "-20.5"
+
+
+def test_flash_point_accepts_masculine_ordinal_degree_sign() -> None:
+    """PanReac SDSs write the degree sign as U+00BA, as in storage limits."""
+    results = extract_flash_point("Flash point: 12 \xbaC", chemical="2-Propanol")
+
+    assert len(results) == 1
+    assert results[0].value == "12"
+
+
+# ---------------------------------------------------------------------------
+# _regex_findall_safe -- main-thread guard for the SIGALRM timeout path
+# ---------------------------------------------------------------------------
+
+
+class _FakeUnixSignal:
+    """Stand-in for the stdlib `signal` module that reports SIGALRM as
+    available regardless of host OS. The real bug this guards against
+    (signal.signal() raising ValueError off the main thread) only
+    reproduces on actual Unix inside a background thread -- e.g. CI's
+    Linux runner executing an async FastAPI endpoint via the test
+    client's event-loop thread -- so it can't be triggered on Windows by
+    platform alone. Recording calls instead of touching the real signal
+    module lets the thread-guard be verified deterministically on any OS.
+    """
+
+    SIGALRM = object()
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def signal(self, signum, handler):
+        self.calls.append(("signal", signum, handler))
+        return None
+
+    def alarm(self, seconds):
+        self.calls.append(("alarm", seconds))
+
+
+def test_regex_findall_safe_uses_alarm_path_on_main_thread(monkeypatch) -> None:
+    """On the main thread, with SIGALRM reported available, the hard-timeout
+    alarm path must actually run -- confirms the thread guard added for the
+    off-main-thread case doesn't also disable the intended Unix path."""
+    fake_signal = _FakeUnixSignal()
+    monkeypatch.setattr(value_extractor, "signal", fake_signal)
+    monkeypatch.setattr(value_extractor.sys, "platform", "linux")
+
+    results = _regex_findall_safe(re.compile(r"a+"), "aaa bbb aaa")
+
+    assert [m.group(0) for m in results] == ["aaa", "aaa"]
+    assert ("alarm", value_extractor.REGEX_TIMEOUT_SECONDS) in fake_signal.calls
+    assert any(call[0] == "signal" for call in fake_signal.calls)
+
+
+def test_regex_findall_safe_skips_alarm_off_main_thread(monkeypatch) -> None:
+    """This is the exact failure seen in CI on PR #75: an async FastAPI
+    endpoint (POST /corpus/documents) runs extract_document() -> ... ->
+    _regex_findall_safe() on the ASGI test client's background event-loop
+    thread, not the main thread. signal.signal() raises ValueError there.
+    Reproduced here with a fake signal module (SIGALRM "available" on any
+    OS) so the guard is verified without depending on an actual Unix CI
+    runner."""
+    fake_signal = _FakeUnixSignal()
+    monkeypatch.setattr(value_extractor, "signal", fake_signal)
+    monkeypatch.setattr(value_extractor.sys, "platform", "linux")
+
+    outcome: dict = {}
+
+    def _run_off_main_thread() -> None:
+        try:
+            outcome["results"] = _regex_findall_safe(re.compile(r"a+"), "aaa bbb aaa")
+        except Exception as exc:  # pragma: no cover -- failure path under test
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=_run_off_main_thread)
+    thread.start()
+    thread.join(timeout=5)
+
+    assert "error" not in outcome, f"raised off the main thread: {outcome.get('error')}"
+    assert [m.group(0) for m in outcome["results"]] == ["aaa", "aaa"]
+    assert fake_signal.calls == []  # alarm path must not have been touched

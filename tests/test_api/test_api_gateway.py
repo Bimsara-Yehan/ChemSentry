@@ -3,8 +3,11 @@
 Tests health check, authentication (JWT login), protected routes, RBAC, safety evaluation, and error handling.
 """
 
+import re
 from datetime import date
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 import api.main as main
@@ -203,7 +206,9 @@ def test_list_alerts_and_sign_off():
     assert response.status_code == 200
     alerts = response.json()["alerts"]
     assert len(alerts) > 0
-    target_alert_id = alerts[-1]["alert_id"]
+    target_alert_id = alerts[0][
+        "alert_id"
+    ]  # newest-first; this is the one just created
 
     # 3. Admin sign-off
     login_admin = client.post(
@@ -222,6 +227,31 @@ def test_list_alerts_and_sign_off():
     data = signoff_res.json()
     assert data["status"] == "sign_off_recorded"
     assert data["alert"]["status"] == "approved"
+
+
+def test_list_alerts_returns_newest_first():
+    """A supervisor working the queue needs the most recent excursion visible
+    without scrolling past the whole history -- GET /alerts must order by
+    id descending, not insertion order."""
+    headers = _analyst_headers()
+    eval_payload = {
+        "chemical_name": "Toluene",
+        "zone_id": "Zone_B",
+        "metric_name": "max_storage_temperature",
+        "current_value": 45.0,
+        "unit": "C",
+    }
+    client.post("/safety/evaluate", json=eval_payload, headers=headers)
+    first_alert_id = client.get("/alerts", headers=headers).json()["alerts"][0][
+        "alert_id"
+    ]
+
+    client.post("/safety/evaluate", json=eval_payload, headers=headers)
+    alerts_after = client.get("/alerts", headers=headers).json()["alerts"]
+
+    assert alerts_after[0]["alert_id"] != first_alert_id
+    ids = [int(a["alert_id"].split("_")[1]) for a in alerts_after]
+    assert ids == sorted(ids, reverse=True)
 
 
 def test_sign_off_unknown_alert_returns_404():
@@ -251,6 +281,19 @@ def test_query_never_asserts_a_safety_verdict():
     data = response.json()
     assert data["evidence"]["final_safety_state"] == "UNKNOWN"
     assert len(data["evidence"]["thresholds"]) > 0  # thresholds were still retrieved
+    assert data["evidence"]["suggested_chemical"] is None
+
+
+def test_query_suggests_but_never_substitutes_a_near_miss_name():
+    """A typo must not come back showing another document's limits under the
+    typed name -- the UI titles results with query.chemical_name."""
+    response = client.post(
+        "/query", json={"chemical_name": "Tolune"}, headers=_analyst_headers()
+    )
+    assert response.status_code == 200
+    evidence = response.json()["evidence"]
+    assert evidence["thresholds"] == []
+    assert evidence["suggested_chemical"] == "Toluene"
 
 
 def test_alert_and_sign_off_are_both_written_to_the_audit_log():
@@ -275,7 +318,7 @@ def test_alert_and_sign_off_are_both_written_to_the_audit_log():
     client.post("/safety/evaluate", json=eval_payload, headers=headers_analyst)
 
     alerts = client.get("/alerts", headers=headers_analyst).json()["alerts"]
-    alert_id = alerts[-1]["alert_id"]
+    alert_id = alerts[0]["alert_id"]  # newest-first; this is the one just created
 
     login_admin = client.post(
         "/auth/login", json={"username": "admin_user", "password": "admin123"}
@@ -397,3 +440,294 @@ def test_submit_zone_telemetry_rejected_for_viewer():
     }
     response = client.post("/zones/Zone_C/telemetry", json=payload, headers=headers)
     assert response.status_code == 403
+
+
+# ============================================================================
+# User Management Tests (M4)
+# ============================================================================
+
+
+def _admin_headers():
+    login_res = client.post(
+        "/auth/login", json={"username": "admin_user", "password": "admin123"}
+    )
+    token = login_res.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_create_user_and_login():
+    """Verify admin can create a real DB user and that user can log in."""
+    headers = _admin_headers()
+    payload = {
+        "username": "new_lab_tech",
+        "password": "techpassword123",
+        "role": "analyst",
+    }
+    create_res = client.post("/users", json=payload, headers=headers)
+    assert create_res.status_code == 201
+    user_data = create_res.json()
+    assert user_data["username"] == "new_lab_tech"
+    assert user_data["role"] == "analyst"
+    assert user_data["is_active"] is True
+
+    # Try logging in as the newly created user
+    login_res = client.post(
+        "/auth/login",
+        json={"username": "new_lab_tech", "password": "techpassword123"},
+    )
+    assert login_res.status_code == 200
+    assert "access_token" in login_res.json()
+
+    # List users and verify new_lab_tech is present
+    list_res = client.get("/users", headers=headers)
+    assert list_res.status_code == 200
+    usernames = [u["username"] for u in list_res.json()]
+    assert "new_lab_tech" in usernames
+
+
+def test_create_user_rbac_restriction():
+    """Verify non-admin cannot create users."""
+    login_res = client.post(
+        "/auth/login", json={"username": "analyst_user", "password": "analyst123"}
+    )
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+    payload = {
+        "username": "unauthorized_user",
+        "password": "password123",
+        "role": "viewer",
+    }
+    res = client.post("/users", json=payload, headers=headers)
+    assert res.status_code == 403
+
+
+# ============================================================================
+# Zone Management Tests (M4)
+# ============================================================================
+
+
+def test_zone_management_crud():
+    """Verify zone creation, adding chemicals, and removing chemicals."""
+    headers = _admin_headers()
+
+    # Create new zone
+    zone_payload = {"zone_id": "Zone_Test", "chemicals": ["Ethanol"]}
+    create_res = client.post("/zones", json=zone_payload, headers=headers)
+    assert create_res.status_code == 201
+    assert create_res.json()["zone_id"] == "Zone_Test"
+    assert "Ethanol" in create_res.json()["chemicals"]
+
+    # Add chemical to zone
+    add_chem_res = client.post(
+        "/zones/Zone_Test/chemicals",
+        json={"chemical_name": "Acetone"},
+        headers=headers,
+    )
+    assert add_chem_res.status_code == 201
+    assert "Acetone" in add_chem_res.json()["chemicals"]
+
+    # Remove chemical from zone
+    del_chem_res = client.delete("/zones/Zone_Test/chemicals/Ethanol", headers=headers)
+    assert del_chem_res.status_code == 200
+    assert "Ethanol" not in del_chem_res.json()["chemicals"]
+    assert "Acetone" in del_chem_res.json()["chemicals"]
+
+
+# ============================================================================
+# Audit Log Tests (M4)
+# ============================================================================
+
+
+def test_get_audit_log_endpoint():
+    """Verify audit log endpoint returns entries and pagination info for ADMIN."""
+    headers = _admin_headers()
+    res = client.get("/audit-log?limit=10&offset=0", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert "entries" in data
+    assert "total" in data
+    assert isinstance(data["entries"], list)
+
+
+# ============================================================================
+# SDS Document Upload Tests (M4)
+# ============================================================================
+
+_TEST_SDS_PDF_BYTES = b"""%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 120 >>
+stream
+BT
+/F1 12 Tf
+50 700 Td
+(Product name : Testium) Tj
+0 -20 Td
+(Company : Test Supplier) Tj
+0 -20 Td
+(SECTION 7: Handling and storage) Tj
+0 -20 Td
+(Store below 12 C.) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000223 00000 n 
+0000000290 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+460
+%%EOF"""
+
+
+@pytest.fixture
+def isolated_corpus(tmp_path, monkeypatch):
+    """Upload tests write real files. Point them at a temp directory -- the
+    real corpus/raw/ is loaded into the live corpus at API startup, and
+    earlier runs left dozens of "Testium" fixtures there -- and restore the
+    in-memory corpus afterwards so uploads don't leak into other tests."""
+    monkeypatch.setattr(main, "CORPUS_RAW_DIR", tmp_path)
+    monkeypatch.setattr(main, "_PROCESSED_DOCUMENTS", list(main._PROCESSED_DOCUMENTS))
+    monkeypatch.setattr(main, "retriever", main.retriever)
+    return tmp_path
+
+
+def test_upload_sds_document_and_query_retrieval(isolated_corpus):
+    """Verify admin can upload a new SDS PDF, extract thresholds, and query immediately."""
+    headers = _admin_headers()
+    files = {"file": ("test_sds_upload.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+
+    upload_res = client.post("/corpus/documents", files=files, headers=headers)
+    assert upload_res.status_code == 201
+    upload_data = upload_res.json()
+    assert upload_data["chemical_name"] == "Testium"
+    assert upload_data["supplier"] == "Test Supplier"
+
+    # Query the newly uploaded chemical in the SAME test
+    query_res = client.post(
+        "/query", json={"chemical_name": "Testium"}, headers=headers
+    )
+    assert query_res.status_code == 200
+    query_data = query_res.json()
+    thresholds = query_data["evidence"]["thresholds"]
+    assert len(thresholds) > 0
+    assert thresholds[0]["parameter"] == "max_storage_temperature"
+    assert thresholds[0]["value"] == 12.0
+    assert thresholds[0]["unit"] == "C"
+
+
+def test_upload_sds_document_rbac_restriction():
+    """Verify non-admin cannot upload SDS documents."""
+    login_res = client.post(
+        "/auth/login", json={"username": "analyst_user", "password": "analyst123"}
+    )
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+    files = {"file": ("test_sds_upload.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+    res = client.post("/corpus/documents", files=files, headers=headers)
+    assert res.status_code == 403
+
+
+def test_upload_filename_is_never_used_as_a_path(isolated_corpus):
+    """A path-traversal-shaped filename must not escape corpus/raw/, and the
+    on-disk name must never be derived from attacker-controlled input --
+    the stored path is a fresh UUID regardless of what the client named the
+    file. Proves the real fix, not just that the upload still returns 200
+    for a well-behaved filename."""
+    import api.main as main
+
+    headers = _admin_headers()
+    malicious_names = [
+        "../../../../etc/evil.pdf",
+        "..\\..\\windows\\evil.pdf",
+        "/etc/passwd.pdf",
+    ]
+    for name in malicious_names:
+        files = {"file": (name, _TEST_SDS_PDF_BYTES, "application/pdf")}
+        res = client.post("/corpus/documents", files=files, headers=headers)
+        assert res.status_code == 201, name
+        data = res.json()
+
+        assert data["original_filename"] == name  # shown back, never trusted as a path
+        source_path = Path(data["source_path"]).resolve()
+        assert source_path.parent == main.CORPUS_RAW_DIR.resolve()
+        assert source_path.is_relative_to(main.CORPUS_RAW_DIR.resolve())
+        # The saved name must be the safe id regex the crawler already
+        # enforces (corpus/crawler/storage.py's _SAFE_ID_RE), never a
+        # literal fragment of the malicious name.
+        assert re.fullmatch(r"[A-Za-z0-9_-]{1,64}\.pdf", source_path.name), name
+        assert source_path.exists()
+
+
+def test_upload_same_filename_twice_does_not_collide_on_disk(isolated_corpus):
+    """Two uploads sharing a client-supplied filename must not silently
+    overwrite each other -- the old bug this fix replaces (raw filename
+    as the path) would have made the second upload clobber the first."""
+    headers = _admin_headers()
+    files = {"file": ("same_name.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+
+    first = client.post("/corpus/documents", files=files, headers=headers)
+    second = client.post("/corpus/documents", files=files, headers=headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["source_path"] != second.json()["source_path"]
+    assert Path(first.json()["source_path"]).exists()
+    assert Path(second.json()["source_path"]).exists()
+
+
+def test_upload_rejects_non_pdf_content_even_with_pdf_extension(isolated_corpus):
+    """A `.pdf`-named file proves nothing about its actual content -- the
+    magic-byte check must reject it before it ever reaches pdfplumber."""
+    headers = _admin_headers()
+    files = {"file": ("fake.pdf", b"not actually a pdf", "application/pdf")}
+    res = client.post("/corpus/documents", files=files, headers=headers)
+    assert res.status_code == 400
+
+
+def test_upload_name_override_survives_restart(isolated_corpus):
+    """An admin's chemical-name/supplier override must still apply after the
+    corpus is rebuilt from disk -- before the fix it lived only in memory,
+    so a restart silently re-parsed Section 1 and lost it (a real Carl Roth
+    SDS whose name the parser couldn't read became "unknown" again)."""
+    headers = _admin_headers()
+    files = {"file": ("roth.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+    data = {"chemical_name": "Renamed Chemical", "supplier": "Override Supplier Ltd"}
+    res = client.post("/corpus/documents", files=files, data=data, headers=headers)
+    assert res.status_code == 201
+    assert res.json()["chemical_name"] == "Renamed Chemical"
+    assert Path(res.json()["source_path"]).with_suffix(".meta.json").is_file()
+
+    rebuilt = main._load_retriever()  # what startup does
+
+    thresholds = rebuilt.get_thresholds("Renamed Chemical")
+    assert [t.value for t in thresholds] == [12.0]
+    assert "testium" not in rebuilt.vocabulary
+
+
+def test_upload_rejects_overlong_override(isolated_corpus):
+    headers = _admin_headers()
+    files = {"file": ("x.pdf", _TEST_SDS_PDF_BYTES, "application/pdf")}
+    res = client.post(
+        "/corpus/documents",
+        files=files,
+        data={"chemical_name": "x" * 201},
+        headers=headers,
+    )
+    assert res.status_code == 400
+    assert list(isolated_corpus.iterdir()) == []
