@@ -187,7 +187,9 @@ def _create_warning_alert_and_get_id() -> str:
         headers=headers,
     )
     alerts = client.get("/alerts", headers=headers).json()["alerts"]
-    return alerts[-1]["alert_id"]
+    return alerts[0][
+        "alert_id"
+    ]  # /alerts is newest-first; this is the one just created
 
 
 def test_narrate_alert_returns_200_with_fallback_explanation():
