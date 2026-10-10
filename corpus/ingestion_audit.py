@@ -16,7 +16,8 @@ This module is that trail. Each run:
        GHS sections were found, every extracted claim type, the storage-
        temperature limits with their source text),
     3. compares against the previous run's log to classify each file as
-       NEW, CHANGED (same name, different bytes), UNCHANGED or REMOVED, and
+       NEW, CHANGED (same name, different PDF bytes or a different admin
+       override sidecar), UNCHANGED or REMOVED, and
        flags byte-identical DUPLICATES under different names,
     4. appends one event per new / changed / removed file to an append-only
        JSON Lines log, so history is never rewritten.
@@ -93,11 +94,18 @@ class DocumentRecord:
     sds_version: str | None = None
     revision_date: str | None = None
     overrides_applied: bool = False
+    # Hash of the admin override sidecar (<id>.meta.json), if any. Part of the
+    # fingerprint because an override changes the chemical name / supplier
+    # the system uses without touching the PDF bytes.
+    overrides_sha256: str | None = None
     sections_found: list[int] = field(default_factory=list)
     claim_counts: dict[str, int] = field(default_factory=dict)
     storage_limits: list[dict] = field(default_factory=list)
     findings: list[str] = field(default_factory=list)
     previous_sha256: str | None = None
+    previous_overrides_sha256: str | None = None
+    # What changed since the last run: "pdf" and/or "overrides".
+    changed: list[str] = field(default_factory=list)
 
 
 def _findings(doc: ProcessedDocument) -> list[str]:
@@ -132,8 +140,12 @@ def _findings(doc: ProcessedDocument) -> list[str]:
 
 def inspect_document(path: Path) -> DocumentRecord:
     """Fingerprint one PDF and record what the real pipeline extracts from it."""
+    sidecar = override_path_for(path)
     record = DocumentRecord(
-        file=path.name, document_id=path.stem, sha256=sha256_of(path)
+        file=path.name,
+        document_id=path.stem,
+        sha256=sha256_of(path),
+        overrides_sha256=sha256_of(sidecar) if sidecar.is_file() else None,
     )
     try:
         raw_text, metadata = load_sds_pdf(path)
@@ -155,7 +167,7 @@ def inspect_document(path: Path) -> DocumentRecord:
     record.revision_date = (
         meta.revision_date.isoformat() if meta.revision_date else None
     )
-    record.overrides_applied = override_path_for(path).is_file()
+    record.overrides_applied = record.overrides_sha256 is not None
     record.sections_found = sorted(doc.sections)
     record.claim_counts = dict(
         sorted(Counter(e.claim_type.value for e in doc.extractions).items())
@@ -242,9 +254,15 @@ def audit_corpus(
         prior = previous.get(record.file)
         if prior is None or prior.get("event") == REMOVED:
             record.status = NEW
-        elif prior.get("sha256") != record.sha256:
-            record.status = CHANGED
-            record.previous_sha256 = prior.get("sha256")
+        else:
+            if prior.get("sha256") != record.sha256:
+                record.changed.append("pdf")
+                record.previous_sha256 = prior.get("sha256")
+            if prior.get("overrides_sha256") != record.overrides_sha256:
+                record.changed.append("overrides")
+                record.previous_overrides_sha256 = prior.get("overrides_sha256")
+            if record.changed:
+                record.status = CHANGED
         documents.append(record)
 
     present = {d.file for d in documents}
@@ -311,6 +329,8 @@ def format_report(report: AuditReport) -> str:
         lines.append(
             f"  sections: {d.sections_found or '-'}  claims: {sum(d.claim_counts.values())}  storage limits: {limits or 'none'}"
         )
+        if d.changed:
+            lines.append(f"  changed: {', '.join(d.changed)}")
         if d.overrides_applied:
             lines.append("  admin overrides applied from .meta.json")
         for f in d.findings:

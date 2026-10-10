@@ -17,6 +17,7 @@ from corpus.ingestion_audit import (
     audit_corpus,
     format_report,
 )
+from corpus.pdf_loader import write_metadata_overrides
 
 
 def _pdf(lines: list[str]) -> bytes:
@@ -189,3 +190,27 @@ def test_report_text_lists_every_document(tmp_path):
     (tmp_path / "216763.pdf").write_bytes(_pdf(_H2O2))
     text = format_report(audit_corpus(tmp_path, write=False))
     assert "216763.pdf" in text and "Hydrogen peroxide solution" in text
+
+
+def test_changed_admin_override_is_logged_as_changed(tmp_path):
+    """An override sidecar renames the chemical without touching the PDF, so
+    it is part of the fingerprint: adding or editing it is a CHANGE."""
+    path = tmp_path / "216763.pdf"
+    path.write_bytes(_pdf(_H2O2))
+    first = audit_corpus(tmp_path).documents[0]
+    assert first.overrides_sha256 is None
+
+    write_metadata_overrides(path, {"chemical_name": "Hydrogen peroxide 30 %"})
+    second = audit_corpus(tmp_path).documents[0]
+    assert second.status == CHANGED
+    assert second.changed == ["overrides"]
+    assert second.sha256 == first.sha256  # the PDF itself is untouched
+    assert second.chemical_name == "Hydrogen peroxide 30 %"
+    assert second.overrides_applied
+
+    write_metadata_overrides(path, {"chemical_name": "Hydrogen peroxide 35 %"})
+    third = audit_corpus(tmp_path).documents[0]
+    assert third.status == CHANGED
+    assert third.previous_overrides_sha256 == second.overrides_sha256
+
+    assert audit_corpus(tmp_path).documents[0].status == UNCHANGED
