@@ -46,6 +46,7 @@ from agents.protocols.schemas import (
 from api.database import (
     SessionLocal,
     check_db_health,
+    check_mqtt_broker_health,
     get_db,
     get_db_schema_info,
     init_db,
@@ -311,8 +312,8 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
 async def health_check(db: Session = Depends(get_db)):
     """Health check — verify API, database, and MQTT broker status."""
     db_status = check_db_health()
-    mqtt_status = "ok"
-    overall_status = "ok" if db_status == "ok" else "degraded"
+    mqtt_status = check_mqtt_broker_health()
+    overall_status = "ok" if db_status == "ok" and mqtt_status == "ok" else "degraded"
 
     return HealthCheck(
         status=overall_status,
@@ -558,8 +559,12 @@ async def submit_zone_telemetry(
 async def list_alerts(
     user: UserInfo = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    """List all safety alerts in review queue (for Supervisor Dashboard)."""
-    alerts = db.query(AlertRecord).order_by(AlertRecord.id).all()
+    """List all safety alerts in review queue (for Supervisor Dashboard).
+
+    Newest first -- a supervisor working the queue needs the most recent
+    excursion visible without scrolling past the full history first.
+    """
+    alerts = db.query(AlertRecord).order_by(AlertRecord.id.desc()).all()
     return {"alerts": [alert.to_dict() for alert in alerts]}
 
 

@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './index.css';
 import {
   addChemicalToZone,
   createZone,
   createUser,
   getAuditLog,
+  getHealth,
   getMe,
   listAlerts,
   listUsers,
@@ -37,6 +38,14 @@ const ZONE_LABELS = {
   Zone_B: 'Zone B — Acid & Base Storage',
   Zone_C: 'Zone C — Oxidizer Storage',
 };
+
+function formatSecondsAgo(sinceDate, nowMs) {
+  if (!sinceDate) return null;
+  const seconds = Math.max(0, Math.round((nowMs - sinceDate.getTime()) / 1000));
+  if (seconds < 1) return 'just now';
+  if (seconds === 1) return '1s ago';
+  return `${seconds}s ago`;
+}
 
 // Mirrors the backend RBAC gates in api/main.py: viewer is read-only on every
 // mutating route (telemetry, query, sign-off); analyst adds telemetry + query;
@@ -124,6 +133,22 @@ function App() {
   const [loginError, setLoginError] = useState('');
 
   const [activeTab, setActiveTab] = useState('live');
+  // refreshAlerts is called from a setInterval closure set up once per
+  // effect run -- reading `activeTab` directly there would see whatever
+  // value was current when that closure was created, not the live one. The
+  // ref sidesteps that without needing to tear down and restart the polling
+  // interval on every tab switch.
+  const activeTabRef = useRef('live');
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+    if (activeTab === 'supervisor') setNewAlertNotice(null);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!newAlertNotice) return undefined;
+    const timeout = setTimeout(() => setNewAlertNotice(null), 8000);
+    return () => clearTimeout(timeout);
+  }, [newAlertNotice]);
   const [activeZone, setActiveZone] = useState('Zone_A');
 
   const [zones, setZones] = useState({});
@@ -168,6 +193,17 @@ function App() {
   const [uploadError, setUploadError] = useState('');
   const [uploadLoading, setUploadLoading] = useState(false);
 
+  // Header health badge -- real GET /health, not a hardcoded label.
+  const [health, setHealth] = useState(null);
+
+  // "Live" badge is meaningless without this -- polling every 5s but never
+  // showing when data last actually arrived means a silently-stalled poll
+  // still claims to be live. zonesLastUpdated records real fetch success;
+  // nowTick just forces a re-render each second so the "Xs ago" text counts
+  // up smoothly instead of only moving in 5s jumps.
+  const [zonesLastUpdated, setZonesLastUpdated] = useState(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
   const refreshZones = async (authToken) => {
     try {
       const zoneList = await listZones(authToken);
@@ -175,16 +211,48 @@ function App() {
       for (const z of zoneList) byId[z.zone_id] = z;
       setZones(byId);
       setZonesError('');
+      setZonesLastUpdated(new Date());
     } catch (err) {
       setZonesError(err.message);
     }
   };
 
+  // *Loaded flags are "has a fetch ever succeeded", not "is a fetch in
+  // flight" -- alerts polls every 5s, and the point is to show a loading
+  // state only before the first real result, not flicker one in on every
+  // subsequent poll cycle.
+  const [alertsLoaded, setAlertsLoaded] = useState(false);
+  const [usersLoaded, setUsersLoaded] = useState(false);
+  const [auditLoaded, setAuditLoaded] = useState(false);
+
+  // Polling updates `alerts` silently every 5s -- without this, a new
+  // WARNING arriving while you're on another tab just appears next time you
+  // happen to look at the Sign-Off Queue. knownAlertIds is a ref (not state)
+  // so comparing against it never itself triggers a re-render; it only
+  // matters at the moment a new fetch resolves.
+  const knownAlertIds = useRef(null);
+  const [newAlertNotice, setNewAlertNotice] = useState(null);
+
   const refreshAlerts = async (authToken) => {
     try {
       const list = await listAlerts(authToken);
+
+      if (knownAlertIds.current !== null) {
+        const newOnes = list.filter((a) => !knownAlertIds.current.has(a.alert_id));
+        if (newOnes.length > 0 && activeTabRef.current !== 'supervisor') {
+          const newest = newOnes[0];
+          setNewAlertNotice(
+            newOnes.length === 1
+              ? `New alert: ${newest.chemical_name} excursion in ${newest.zone_id}`
+              : `${newOnes.length} new alerts, most recent: ${newest.chemical_name} in ${newest.zone_id}`
+          );
+        }
+      }
+      knownAlertIds.current = new Set(list.map((a) => a.alert_id));
+
       setAlerts(list);
       setAlertsError('');
+      setAlertsLoaded(true);
     } catch (err) {
       setAlertsError(err.message);
     }
@@ -195,6 +263,7 @@ function App() {
       const list = await listUsers(authToken);
       setUsers(list || []);
       setUsersError('');
+      setUsersLoaded(true);
     } catch (err) {
       setUsersError(err.message);
     }
@@ -207,6 +276,7 @@ function App() {
       setAuditTotal(res?.total || 0);
       setAuditOffset(offset);
       setAuditError('');
+      setAuditLoaded(true);
     } catch (err) {
       setAuditError(err.message);
     }
@@ -249,12 +319,37 @@ function App() {
   }, [token, activeTab]);
 
   useEffect(() => {
-    if (!token || activeTab !== 'supervisor') return undefined;
+    if (activeTab !== 'live') return undefined;
+    const tick = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [activeTab]);
+
+  // Alerts poll regardless of which tab is active -- unlike zone telemetry,
+  // detecting a new alert while the viewer is on a DIFFERENT tab (to surface
+  // the notification below) is the whole point of this effect, so it can't
+  // be gated to only run while already on the Sign-Off Queue tab.
+  useEffect(() => {
+    if (!token) return undefined;
     refreshAlerts(token);
     const interval = setInterval(() => refreshAlerts(token), 5000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, activeTab]);
+  }, [token]);
+
+  // Header badge is always visible regardless of tab, so this polls
+  // independently of the tab-scoped effects above. 10s (not 5s like the
+  // zone/alert polling) -- broker/DB reachability doesn't change as often as
+  // a sensor reading, and this check isn't tied to anything time-critical.
+  useEffect(() => {
+    if (!token) return undefined;
+    const check = () =>
+      getHealth()
+        .then(setHealth)
+        .catch(() => setHealth({ status: 'down' }));
+    check();
+    const interval = setInterval(check, 10000);
+    return () => clearInterval(interval);
+  }, [token]);
 
   const handleSendReading = async (temperatureCelsius) => {
     setTelemetryLoading(true);
@@ -412,9 +507,24 @@ function App() {
           </div>
         </div>
         <div className="header-status">
-          <div className="status-badge">
+          <div
+            className={`status-badge${
+              health && health.status !== 'ok' ? ` is-${health.status === 'down' ? 'down' : 'degraded'}` : ''
+            }`}
+            title={
+              health && health.status !== 'ok'
+                ? `database: ${health.database ?? 'unknown'} · mqtt_broker: ${health.mqtt_broker ?? 'unknown'}`
+                : undefined
+            }
+          >
             <span className="pulse-dot"></span>
-            System Online
+            {!health
+              ? 'Checking…'
+              : health.status === 'ok'
+              ? 'System Online'
+              : health.status === 'degraded'
+              ? 'Degraded'
+              : 'Unreachable'}
           </div>
           <div className="user-chip">
             <span>
@@ -487,6 +597,26 @@ function App() {
         <span className="role-banner-detail">{ROLE_INFO[currentUser?.role]?.detail}</span>
       </div>
 
+      {newAlertNotice && (
+        <div className="new-alert-toast">
+          <span className="state-badge state-WARNING">New</span>
+          <span>{newAlertNotice}</span>
+          <button
+            className="new-alert-toast-view"
+            onClick={() => setActiveTab('supervisor')}
+          >
+            View
+          </button>
+          <button
+            className="new-alert-toast-dismiss"
+            aria-label="Dismiss"
+            onClick={() => setNewAlertNotice(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Tab 1: Live Environment View */}
       {activeTab === 'live' && (
         <div className="dashboard-grid">
@@ -499,6 +629,18 @@ function App() {
                     <span className="pulse-dot"></span>
                     Live
                   </span>
+                  {zonesLastUpdated && (
+                    <span
+                      style={{
+                        marginLeft: '8px',
+                        fontSize: '12px',
+                        color: 'var(--text-dim)',
+                        fontWeight: 400,
+                      }}
+                    >
+                      updated {formatSecondsAgo(zonesLastUpdated, nowTick)}
+                    </span>
+                  )}
                 </div>
                 <div className="zone-selector">
                   {Object.keys(ZONE_LABELS).map((z) => (
@@ -569,7 +711,10 @@ function App() {
                   ))}
                 </>
               ) : (
-                <p style={{ color: 'var(--text-muted)' }}>Loading zone data…</p>
+                <p className="loading-state">
+                  <span className="loading-spinner"></span>
+                  Loading zone data…
+                </p>
               )}
             </div>
 
@@ -750,7 +895,13 @@ function App() {
           )}
 
           <div className="inventory-list">
-            {alerts.length === 0 && !alertsError && (
+            {!alertsLoaded && !alertsError && (
+              <p className="loading-state">
+                <span className="loading-spinner"></span>
+                Loading alerts…
+              </p>
+            )}
+            {alertsLoaded && alerts.length === 0 && !alertsError && (
               <p className="empty-state">No alerts recorded yet.</p>
             )}
             {alerts.map((alert) => (
@@ -870,7 +1021,13 @@ function App() {
               )}
 
               <div className="inventory-list" style={{ marginTop: '16px' }}>
-                {users.length === 0 && !usersError && (
+                {!usersLoaded && !usersError && (
+                  <p className="loading-state">
+                    <span className="loading-spinner"></span>
+                    Loading users…
+                  </p>
+                )}
+                {usersLoaded && users.length === 0 && !usersError && (
                   <p className="empty-state">No DB-backed user accounts registered yet. Demo accounts (viewer_user, analyst_user, admin_user) are active via fallback.</p>
                 )}
                 {users.map((u) => (
@@ -1213,7 +1370,13 @@ function App() {
           )}
 
           <div className="inventory-list" style={{ marginTop: '16px' }}>
-            {auditLogs.length === 0 && !auditError && (
+            {!auditLoaded && !auditError && (
+              <p className="loading-state">
+                <span className="loading-spinner"></span>
+                Loading audit log…
+              </p>
+            )}
+            {auditLoaded && auditLogs.length === 0 && !auditError && (
               <p className="empty-state">No audit log entries recorded yet.</p>
             )}
             {auditLogs.map((log) => (

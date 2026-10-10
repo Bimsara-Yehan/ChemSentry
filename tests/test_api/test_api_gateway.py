@@ -203,7 +203,9 @@ def test_list_alerts_and_sign_off():
     assert response.status_code == 200
     alerts = response.json()["alerts"]
     assert len(alerts) > 0
-    target_alert_id = alerts[-1]["alert_id"]
+    target_alert_id = alerts[0][
+        "alert_id"
+    ]  # newest-first; this is the one just created
 
     # 3. Admin sign-off
     login_admin = client.post(
@@ -222,6 +224,31 @@ def test_list_alerts_and_sign_off():
     data = signoff_res.json()
     assert data["status"] == "sign_off_recorded"
     assert data["alert"]["status"] == "approved"
+
+
+def test_list_alerts_returns_newest_first():
+    """A supervisor working the queue needs the most recent excursion visible
+    without scrolling past the whole history -- GET /alerts must order by
+    id descending, not insertion order."""
+    headers = _analyst_headers()
+    eval_payload = {
+        "chemical_name": "Toluene",
+        "zone_id": "Zone_B",
+        "metric_name": "max_storage_temperature",
+        "current_value": 45.0,
+        "unit": "C",
+    }
+    client.post("/safety/evaluate", json=eval_payload, headers=headers)
+    first_alert_id = client.get("/alerts", headers=headers).json()["alerts"][0][
+        "alert_id"
+    ]
+
+    client.post("/safety/evaluate", json=eval_payload, headers=headers)
+    alerts_after = client.get("/alerts", headers=headers).json()["alerts"]
+
+    assert alerts_after[0]["alert_id"] != first_alert_id
+    ids = [int(a["alert_id"].split("_")[1]) for a in alerts_after]
+    assert ids == sorted(ids, reverse=True)
 
 
 def test_sign_off_unknown_alert_returns_404():
@@ -275,7 +302,7 @@ def test_alert_and_sign_off_are_both_written_to_the_audit_log():
     client.post("/safety/evaluate", json=eval_payload, headers=headers_analyst)
 
     alerts = client.get("/alerts", headers=headers_analyst).json()["alerts"]
-    alert_id = alerts[-1]["alert_id"]
+    alert_id = alerts[0]["alert_id"]  # newest-first; this is the one just created
 
     login_admin = client.post(
         "/auth/login", json={"username": "admin_user", "password": "admin123"}
