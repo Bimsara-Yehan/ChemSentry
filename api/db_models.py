@@ -133,6 +133,38 @@ class AuditLogRecord(Base):
     )
 
 
+def alert_to_dict(alert: AlertRecord, role: str) -> dict:
+    """Role-aware serializer for GET /alerts, so each role sees only what it needs.
+
+    AlertRecord.to_dict() returns every column, including who raised and
+    signed an alert and the sign-off notes (encrypted at rest because they
+    are identity and free text, see the class docstring). Viewers only need
+    what was flagged and its status; analysts also need the values and
+    reasoning to investigate; sign-off identity and notes stay with admins.
+    """
+    role_str = role.value if hasattr(role, "value") else str(role)
+    data = {
+        "alert_id": alert.alert_id,
+        "zone_id": alert.zone_id,
+        "chemical_name": alert.chemical_name,
+        "status": alert.status,
+        "created_at": alert.created_at.isoformat() if alert.created_at else None,
+    }
+    # Operational metrics exposed to analyst and admin
+    if role_str in ("analyst", "admin"):
+        data["reasoning"] = alert.reasoning
+        data["threshold_value"] = alert.threshold_value
+        data["current_value"] = alert.current_value
+        data["unit"] = alert.unit
+    # PII and investigator notes restricted strictly to administrators
+    if role_str == "admin":
+        data["created_by"] = alert.created_by
+        data["signed_by"] = alert.signed_by
+        data["notes"] = alert.notes
+        data["signed_at"] = alert.signed_at.isoformat() if alert.signed_at else None
+    return data
+
+
 def next_alert_id(db) -> str:
     """Generate the next sequential alert_id (ALT_0001, ALT_0002, ...).
 

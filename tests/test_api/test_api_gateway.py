@@ -731,3 +731,117 @@ def test_upload_rejects_overlong_override(isolated_corpus):
     )
     assert res.status_code == 400
     assert list(isolated_corpus.iterdir()) == []
+
+
+# ============================================================================
+# Remediation (#82): no invented readings, role-filtered alerts, demo accounts
+# ============================================================================
+
+
+def test_zone_without_a_reading_is_unknown_but_shows_its_retrieved_limits(
+    monkeypatch,
+):
+    """No sensor has reported, so nothing is evaluated -- but the zone's SDS
+    limits are still retrieved and cited rather than shown as missing."""
+    monkeypatch.setattr(main, "_LATEST_ZONE_EVALUATIONS", {})
+    zone = client.get("/zones/Zone_C", headers=_analyst_headers()).json()
+
+    assert zone["last_reading"] is None
+    assert zone["safety_state"] == "UNKNOWN"
+    h2o2_max = next(
+        c
+        for c in zone["checks"]
+        if c["chemical_name"] == "Hydrogen peroxide solution"
+        and c["metric_name"] == "max_storage_temperature"
+    )
+    assert h2o2_max["state"] == "UNKNOWN"
+    assert h2o2_max["current_value"] is None  # never a placeholder 0.0
+    assert h2o2_max["threshold_value"] == 8.0
+    assert "TEST_H2O2_001" in h2o2_max["citation"]
+
+
+def test_creating_a_zone_records_no_reading():
+    """A new zone used to get an invented 20 C "zone-create-default" reading."""
+    headers = _admin_headers()
+    created = client.post(
+        "/zones",
+        json={"zone_id": "Zone_NoReading", "chemicals": ["Hydrogen peroxide solution"]},
+        headers=headers,
+    )
+    assert created.status_code == 201
+
+    zone = client.get("/zones/Zone_NoReading", headers=headers).json()
+    assert zone["last_reading"] is None
+    assert zone["safety_state"] == "UNKNOWN"
+
+
+def test_alerts_are_filtered_by_role():
+    client.post(
+        "/safety/evaluate",
+        json={
+            "chemical_name": "Toluene",
+            "zone_id": "Zone_B",
+            "metric_name": "max_storage_temperature",
+            "current_value": 40.0,
+            "unit": "C",
+        },
+        headers=_analyst_headers(),
+    )
+
+    def newest_alert(username: str, password: str) -> dict:
+        token = client.post(
+            "/auth/login", json={"username": username, "password": password}
+        ).json()["access_token"]
+        alerts = client.get(
+            "/alerts", headers={"Authorization": f"Bearer {token}"}
+        ).json()["alerts"]
+        return alerts[0]
+
+    viewer = newest_alert("viewer_user", "viewer123")
+    analyst = newest_alert("analyst_user", "analyst123")
+    admin = newest_alert("admin_user", "admin123")
+
+    assert viewer["chemical_name"] == "Toluene"
+    assert "reasoning" not in viewer and "current_value" not in viewer
+    assert analyst["reasoning"] and analyst["current_value"] == 40.0
+    assert "created_by" not in analyst and "notes" not in analyst
+    assert admin["created_by"] == "analyst_user"
+
+
+def test_demo_accounts_cannot_log_in_in_production(monkeypatch):
+    from api.security import authenticate_user
+
+    monkeypatch.setenv("CHEMSENTRY_ENV", "production")
+    assert authenticate_user("admin_user", "admin123") is None
+
+
+def test_database_users_still_log_in_in_production(monkeypatch):
+    """Only the demo fallback is disabled in production, not login itself."""
+    from api.db_models import UserRecord
+    from api.models import UserRole
+    from api.security import authenticate_user, hash_password
+
+    db = SessionLocal()
+    try:
+        # Written before switching to production, as an admin would have
+        # created it while the system was running.
+        db.add(
+            UserRecord(
+                user_id="user_prod_test",
+                username="prod_operator",
+                password_hash=hash_password("s3cure-pass!"),
+                role="analyst",
+                is_active=True,
+            )
+        )
+        db.commit()
+
+        monkeypatch.setenv("CHEMSENTRY_ENV", "production")
+        assert authenticate_user("prod_operator", "s3cure-pass!", db=db) == (
+            "user_prod_test",
+            UserRole.ANALYST,
+        )
+    finally:
+        db.query(UserRecord).filter(UserRecord.username == "prod_operator").delete()
+        db.commit()
+        db.close()

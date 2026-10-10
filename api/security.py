@@ -345,7 +345,10 @@ def authenticate_user(
 
     Resolution order (DB-first, fallback to demo users):
       1. If `db` session is supplied, check the `UserRecord` ORM table.
-      2. If not found in DB (or table does not exist yet), fall back to demo users.
+      2. If not found in DB (or table does not exist yet), fall back to demo users
+         -- except in production (CHEMSENTRY_ENV=production), where the demo
+         accounts' passwords are published in the repo and must never log in.
+         Only the fallback is disabled: admin-created DB users still work.
 
     Note: Exception handling is specifically narrowed to (OperationalError, ProgrammingError)
     so table non-existence falls back safely to demo users, while security errors like
@@ -372,6 +375,9 @@ def authenticate_user(
         except (OperationalError, ProgrammingError):
             # Table does not exist yet; fall back to demo users
             pass
+
+    if _is_production():
+        return None
 
     demo_users = _get_demo_users()
     if username not in demo_users:

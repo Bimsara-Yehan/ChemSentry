@@ -183,11 +183,14 @@ export default function SignoffView({ token, alerts, alertsLoaded, alertsError, 
                               <dd>{source || '—'}</dd>
                             </div>
                           </dl>
-                          <div className="eval-log">
-                            <div className="eval-log-line">
-                              <span>{alert.reasoning}</span>
+                          {/* /alerts omits fields by role (api/db_models.py alert_to_dict) */}
+                          {alert.reasoning && (
+                            <div className="eval-log">
+                              <div className="eval-log-line">
+                                <span>{alert.reasoning}</span>
+                              </div>
                             </div>
-                          </div>
+                          )}
 
                           <SafetyCard token={token} alertId={alert.alert_id} />
 
@@ -224,7 +227,8 @@ export default function SignoffView({ token, alerts, alertsLoaded, alertsError, 
                           ) : (
                             <p className="signoff-record">
                               <strong>
-                                {alert.status === 'approved' ? 'Approved' : 'Rejected'} by {alert.signed_by}
+                                {alert.status === 'approved' ? 'Approved' : 'Rejected'}
+                                {alert.signed_by && <> by {alert.signed_by}</>}
                               </strong>
                               {alert.signed_at && <> · {formatDateTime(alert.signed_at)}</>}
                               {alert.notes && <> — “{alert.notes}”</>}

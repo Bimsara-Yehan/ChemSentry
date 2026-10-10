@@ -353,8 +353,10 @@ def test_real_alert_tables_hold_only_ciphertext_but_the_api_still_reads_plaintex
         assert alert_row[4] == "Zone_A"  # deliberately still plaintext / filterable
 
         client = TestClient(main.app)
+        # Admin: /alerts filters fields by role, and only admins get the
+        # identity and notes columns this test checks are decrypted.
         login = client.post(
-            "/auth/login", json={"username": "analyst_user", "password": "analyst123"}
+            "/auth/login", json={"username": "admin_user", "password": "admin123"}
         )
         headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
         served = next(

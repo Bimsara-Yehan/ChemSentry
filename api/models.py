@@ -64,7 +64,7 @@ class ZoneState(BaseModel):
     """Aggregated state of a zone (room, storage area, etc)."""
 
     zone_id: str
-    last_reading: SensorReading
+    last_reading: Optional[SensorReading] = None
     is_excursion: bool  # True if outside safe bounds
     safety_state: str  # "SAFE", "WARNING", "UNKNOWN"
     last_alert_timestamp: Optional[datetime] = None
@@ -83,7 +83,8 @@ class ChemicalCheckOut(BaseModel):
     chemical_name: str
     metric_name: str
     state: str  # "SAFE", "WARNING", "UNKNOWN"
-    current_value: float
+    # None when the zone has no sensor reading yet -- never a placeholder 0.0.
+    current_value: Optional[float] = None
     threshold_value: Optional[float] = None
     reasoning: str
     citation: Optional[str] = None

@@ -30,12 +30,18 @@ const uint16_t MQTT_PORT = SECRET_MQTT_PORT;
 // extracted numeric storage-temperature range in this project's corpus, so
 // it is the only zone where a live reading can produce a genuine SAFE/WARNING
 // rather than an honest UNKNOWN.
-const char *ZONE_ID = "Zone_C";
+// Set per device in secrets.h. The fallback keeps a secrets.h written before
+// SECRET_ZONE_ID existed compiling, with the zone this firmware always used.
+#ifndef SECRET_ZONE_ID
+#define SECRET_ZONE_ID "Zone_C"
+#endif
+const char *ZONE_ID = SECRET_ZONE_ID;
 
 // Topic scheme fixed by agents/agent_c_environment/mqtt_subscriber.py:
 // chemsentry/sensors/<zone_id>/reading -- must match exactly, Agent C parses
-// the zone_id out of both the topic and the payload.
-const char *MQTT_TOPIC = "chemsentry/sensors/Zone_C/reading";
+// the zone_id out of both the topic and the payload. Joined at compile time
+// (adjacent string literals), so no heap String is built at startup.
+const char *MQTT_TOPIC = "chemsentry/sensors/" SECRET_ZONE_ID "/reading";
 
 // TLS material (see secrets.h) mirrors exactly what
 // agents/agent_c_environment/mqtt_subscriber.py and

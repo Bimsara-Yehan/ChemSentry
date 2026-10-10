@@ -110,17 +110,9 @@ class DeterministicSafetyEvaluator:
                 f"requested metric '{request.metric_name}'.",
             )
 
-        # 2. Hazard-statement conflicts across sources take precedence over numeric
-        # reconciliation -- two sources that disagree on hazard classification are
-        # unresolvable evidence even if their numeric thresholds happen to agree.
-        hazard_conflict = self._detect_hazard_conflicts(matching_thresholds)
-        if hazard_conflict:
-            return self._unknown_result(request, hazard_conflict)
-
-        # 3. Check for supplier authority and numeric conflicts
-        reconciled_threshold, conflict_reason = self._reconcile_thresholds(
-            matching_thresholds
-        )
+        # 2-3. Hazard-statement conflicts, then supplier authority and numeric
+        # conflicts (see reconcile()).
+        reconciled_threshold, conflict_reason = self.reconcile(matching_thresholds)
         if conflict_reason:
             return self._unknown_result(request, conflict_reason)
 
@@ -171,6 +163,37 @@ class DeterministicSafetyEvaluator:
             provenance=reconciled_threshold,
             reasoning=reasoning,
         )
+
+    def reconcile(
+        self, thresholds: List[ProvenancedThreshold]
+    ) -> tuple[Optional[ProvenancedThreshold], Optional[str]]:
+        """Pick the one threshold a reading would be compared against, or say why not.
+
+        Problem this solves:
+            A zone with no sensor reading yet still has retrieved SDS limits worth
+            showing, and they must be the same limit evaluate() would later use --
+            not simply the first source -- so conflicting suppliers stay visible
+            as a conflict rather than one of them being shown as "the" limit.
+
+        Why this technique:
+            evaluate() steps 2-3 need no reading, so they live here and evaluate()
+            calls this: one place decides which limit applies, with or without a
+            reading.
+
+        Args:
+            thresholds: Retrieved thresholds for a single metric.
+
+        Returns:
+            (threshold, None) when one limit applies, or (None, reason) when the
+            sources conflict on hazard statements or diverge numerically.
+        """
+        # Hazard-statement conflicts across sources take precedence over numeric
+        # reconciliation -- two sources that disagree on hazard classification are
+        # unresolvable evidence even if their numeric thresholds happen to agree.
+        hazard_conflict = self._detect_hazard_conflicts(thresholds)
+        if hazard_conflict:
+            return None, hazard_conflict
+        return self._reconcile_thresholds(thresholds)
 
     def _unknown_result(
         self, request: SafetyEvaluationRequest, reason: str
