@@ -102,7 +102,25 @@ export default function SearchView({ token, isViewer, suggestions }) {
                   </span>
                 </div>
 
-                {result.evidence.thresholds.length === 0 ? (
+                {result.evidence.thresholds.length === 0 && result.evidence.suggested_chemical ? (
+                  // Limits only come from an exact name match, so a near-miss
+                  // is offered here rather than searched automatically: the
+                  // closest spelling can be a different substance (Methanol
+                  // -> Ethanol), and its limits must not appear under this name.
+                  <EmptyState title="No SDS under this name" icon={FileText}>
+                    <p>
+                      Did you mean{' '}
+                      <button type="button" className="chip-btn" onClick={() => run(result.evidence.suggested_chemical)}>
+                        {result.evidence.suggested_chemical}
+                      </button>
+                      ?
+                    </p>
+                    <p className="muted small">
+                      Only search it if it is the same substance. Otherwise upload this chemical&apos;s SDS under
+                      Zones &amp; documents.
+                    </p>
+                  </EmptyState>
+                ) : result.evidence.thresholds.length === 0 ? (
                   <EmptyState title="No limits found" icon={FileText}>
                     The current corpus has no storage limits for this name. Upload its SDS under Zones &amp; documents.
                   </EmptyState>
