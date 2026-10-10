@@ -249,19 +249,49 @@ _PPE_MATERIAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A single value or a range ("12-13", "100 - 101"), for physical properties
+# whose SDS entry may be either. Without the optional range, a real
+# 2-Propanol SDS's "Flash point: 12-13 °C" matched as -13 °C: "12" isn't
+# followed by a unit, so the regex backtracked onto "-13" and read the range
+# dash as a minus sign. The lookbehind stops a sign being taken from a dash
+# that directly follows a digit, in case a range shape this misses.
+_VALUE_OR_RANGE = rf"(?<![\d.,])({_NUM})(?:\s*[-–]\s*({_NUM}))?"
+
 # Flash point: "Flash point: 4 °C" (real corpus: often negative, e.g. "-17,0 °C" --
 # see the module-level comment above _NUM for why the number group must
-# support a leading sign and a comma decimal)
+# support a leading sign and a comma decimal), or a range "12-13 °C".
 _FLASH_POINT_RE = re.compile(
-    rf"(?:flash\s*point).{{0,30}}?" rf"({_NUM})\s*°?\s*([CF])",
+    rf"(?:flash\s*point).{{0,30}}?{_VALUE_OR_RANGE}\s*{_DEG}\s*([CF])",
     re.IGNORECASE,
 )
 
-# Boiling point: "Boiling point: 111 °C"
+# Boiling point: "Boiling point: 111 °C", or a range "100 - 101 °C".
 _BOILING_POINT_RE = re.compile(
-    rf"(?:boiling\s*point).{{0,30}}?" rf"({_NUM})\s*°?\s*([CF])",
+    rf"(?:boiling\s*point).{{0,30}}?{_VALUE_OR_RANGE}\s*{_DEG}\s*([CF])",
     re.IGNORECASE,
 )
+
+
+def _lower_bound(low: str, high: str | None) -> str:
+    """Pick the value to report for a flash/boiling point that may be a range.
+
+    The safety layer raises WARNING when a reading exceeds either property,
+    so the range's lower end is the conservative limit: reporting the upper
+    end would let a reading inside the range pass as SAFE. The full range
+    stays visible in original_text_span for the citation.
+
+    Args:
+        low: First number as matched.
+        high: Second number as matched, or None for a single value.
+
+    Returns:
+        Canonical numeric string of the smaller value.
+    """
+    values = [_normalise_numeric_string(low)]
+    if high is not None:
+        values.append(_normalise_numeric_string(high))
+    return min(values, key=float)
+
 
 # Incompatible materials: "Incompatible with strong oxidizers, acids".
 #
@@ -627,8 +657,8 @@ def extract_flash_point(
             _make_result(
                 chemical=chemical,
                 claim_type=ClaimType.FLASH_POINT,
-                value=_normalise_numeric_string(match.group(1)),
-                unit=f"°{match.group(2).upper()}",
+                value=_lower_bound(match.group(1), match.group(2)),
+                unit=f"°{match.group(3).upper()}",
                 section_number=section_number,
                 original_text_span=match.group(0),
                 confidence=0.90,
@@ -650,8 +680,8 @@ def extract_boiling_point(
             _make_result(
                 chemical=chemical,
                 claim_type=ClaimType.BOILING_POINT,
-                value=_normalise_numeric_string(match.group(1)),
-                unit=f"°{match.group(2).upper()}",
+                value=_lower_bound(match.group(1), match.group(2)),
+                unit=f"°{match.group(3).upper()}",
                 section_number=section_number,
                 original_text_span=match.group(0),
                 confidence=0.90,
