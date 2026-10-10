@@ -12,8 +12,14 @@ export function humanizeMetric(metric) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+// "alert_created" -> "Alert created"; acronyms such as SDS stay upper-case.
+const ACRONYMS = new Set(['sds', 'cas', 'id']);
+
 export function humanizeAction(action) {
-  return humanizeMetric(action);
+  if (!action) return '';
+  const words = action.split('_').map((w) => (ACRONYMS.has(w) ? w.toUpperCase() : w));
+  const text = words.join(' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export function formatUnit(unit) {
@@ -57,9 +63,21 @@ export function unitForCheck(check) {
   return '';
 }
 
+// Alert and audit timestamps come back from SQLite as naive UTC strings
+// ("2026-10-10T11:44:56") with no offset. `new Date()` would read those as
+// *local* time, shifting every alert by the viewer's UTC offset (5.5 h in
+// Sri Lanka). Treat an offset-less ISO string as UTC; strings that already
+// carry "Z" or "+hh:mm" are left alone.
+export function parseTimestamp(iso) {
+  if (!iso) return null;
+  const s = String(iso);
+  const hasZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(s);
+  return new Date(hasZone || !s.includes('T') ? s : `${s}Z`);
+}
+
 export function timeAgo(iso, nowMs = Date.now()) {
   if (!iso) return '';
-  const then = new Date(iso).getTime();
+  const then = parseTimestamp(iso).getTime();
   if (Number.isNaN(then)) return '';
   const s = Math.max(0, Math.round((nowMs - then) / 1000));
   if (s < 45) return 'just now';
@@ -69,12 +87,12 @@ export function timeAgo(iso, nowMs = Date.now()) {
   if (h < 24) return `${h}h ago`;
   const d = Math.round(h / 24);
   if (d < 30) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return parseTimestamp(iso).toLocaleDateString();
 }
 
 export function formatDateTime(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = parseTimestamp(iso);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleString(undefined, {
     month: 'short',
