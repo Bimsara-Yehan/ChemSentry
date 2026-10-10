@@ -423,6 +423,12 @@ async def query_chemical(
 
     thresholds_list = retriever.get_thresholds(request.chemical_name)
 
+    # Thresholds come only from an exact name match. A near-miss is offered
+    # as a suggestion instead of being searched on the user's behalf, so
+    # "Methanol" can't come back showing Ethanol's limits under its name.
+    match = retriever.resolve_name(request.chemical_name)
+    suggested_chemical = match.term if match and match.stage != "exact" else None
+
     threshold_dicts = [
         {
             "parameter": t.metric_name,
@@ -452,6 +458,7 @@ async def query_chemical(
             "thresholds": threshold_dicts,
             "conflicts": [],
             "final_safety_state": "UNKNOWN",
+            "suggested_chemical": suggested_chemical,
         },
     )
 
