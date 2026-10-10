@@ -15,9 +15,16 @@ collapsing it into a binary safe/unsafe verdict:
   "REACTIVE: ..."          -- at least one real SDS Section 10 source names the other
                               chemical explicitly as incompatible.
   "VIOLENT REACTION: ..."  -- as REACTIVE but for violent exothermic / explosive reactions.
+                              Only the cited fallback dict uses it: SDS Section 10 text
+                              names incompatible materials without grading severity, so
+                              the corpus path reports REACTIVE.
   "REVIEW: ..."            -- a real SDS lists an incompatibility *class* (e.g. "Bases",
                               "Hydrogen halides") rather than the chemical by name; a
                               human reviewer must confirm membership.
+
+An exact name match in either chemical's SDS always outranks a class match in either:
+"Sodium hydroxide" lists both the class "Acids" and "sulfuric acid" by name, and the
+named entry is the stronger, citable evidence.
   "NO KNOWN WARNING: ..."  -- neither SDS Section 10 mentions the other chemical or any
                               class we can evaluate without guessing.  This replaces the
                               old "COMPATIBLE" default which incorrectly treated absence
@@ -28,9 +35,12 @@ Hard constraints (CLAUDE.md)
 - Wildcard / suffix matching is retrieval, NOT classification.  We NEVER decide that
   "Hydrochloric acid" is an acid from its name.  Every class membership entry in
   CHEMICAL_CLASSES below must cite a real source.
-- Fuzzy matching (Soundex, edit-distance) is NOT used here.  The M2 retriever tolerant-
-  matching is right for threshold retrieval; a wrong fuzzy match here would *invent* a
-  hazard or *hide* one.  We normalise only case and whitespace, and match exactly.
+- Fuzzy matching (Soundex, edit-distance) is NOT used here, for the same reason M2's
+  threshold retrieval only accepts exact names: a wrong fuzzy match would *invent* a
+  hazard or *hide* one.  We normalise only case and whitespace.  Class labels match as
+  whole words inside an entry ("Strong oxidizing agents" contains "oxidizing agents"),
+  never as a fragment of a longer word, and CHEMICAL_CLASSES holds only plural class
+  nouns ("alkalis", not "alkali", which would match "Alkali metals").
 - Unknown must stay unknown.  If there is no evidence of incompatibility in the SDS
   corpus we say "NO KNOWN WARNING", never "COMPATIBLE".
 """
@@ -98,52 +108,42 @@ _CITED_FALLBACK_PAIRS: dict[frozenset, str] = {
 # classification).  Instead this reviewed table maps normalised chemical names to the
 # class labels that appear in real SDS Section 10 text.
 #
-# Every entry cites its primary source.  Do NOT add entries inferred from chemical
-# nomenclature alone.  Only add when membership is stated explicitly in:
-#   - the chemical's own SDS Section 2 or 3, OR
-#   - a published CAMEO reactive-group list, OR
-#   - another peer-reviewed source (cite it).
+# Each entry says where its membership comes from, in one of two tiers:
+#   - "SDS": the chemical's own SDS in corpus/raw/ states it (GHS class in Section 2).
+#   - "Textbook": standard chemistry the SDS does not state (e.g. that sodium hydroxide
+#     is a strong base). Acceptable only because a class match is REVIEW, never
+#     REACTIVE -- a person confirms it.
+# Do NOT add entries inferred from the chemical's name alone, and use plural class nouns
+# only: a singular such as "alkali" would match the unrelated class "Alkali metals".
+
+_OXIDISER_CLASSES = {"oxidizing agents", "oxidising agents", "oxidizers", "oxidisers"}
 
 CHEMICAL_CLASSES: dict[str, set[str]] = {
-    # Hydrochloric acid -- a hydrogen halide.
-    # Source: CAMEO Chemicals reactive group "Hydrogen Halides"; IUPAC nomenclature
-    # (HCl = prototypical hydrogen halide); Sigma-Aldrich HCl SDS Section 3.
-    "hydrochloric acid": {"hydrogen halides", "hydrogen halide", "acids", "acid"},
-    # Sulfuric acid -- strong inorganic acid and oxidising agent.
-    # Source: Sigma-Aldrich sulfuric acid SDS Section 2 (corrosive, oxidising);
-    # CAMEO Chemicals reactive group "Inorganic Acids".
-    "sulfuric acid": {
-        "acids",
-        "acid",
-        "strong acids",
-        "oxidizing agents",
-        "oxidising agents",
-    },
-    # Sodium hydroxide -- strong base / alkali.
-    # Source: Sigma-Aldrich sodium hydroxide SDS [221465] Section 2 (corrosive, strong
-    # base); CAMEO Chemicals reactive group "Bases, Strong".
-    "sodium hydroxide": {"bases", "base", "alkali", "alkalis", "strong bases"},
-    # Acetone -- ketone, organic solvent, reducing agent.
-    # Source: Sigma-Aldrich acetone SDS Section 2 (flammable, irritant);
-    # CAMEO Chemicals reactive group "Ketones".
-    "acetone": {"ketones", "ketone", "organic solvents", "reducing agents"},
-    # Sodium bicarbonate -- weak base / carbonate salt.
-    # Source: Sigma-Aldrich sodium bicarbonate SDS [s5761] Section 10 lists "acids"
-    # as incompatible, confirming its base character.
-    "sodium bicarbonate": {"bases", "base", "carbonates"},
-    # Citric acid -- weak organic acid.
-    # Source: Sigma-Aldrich citric acid SDS [c0759] Section 2 (irritant, weak acid).
-    "citric acid": {"acids", "acid", "organic acids"},
-    # Ethanol -- flammable alcohol, reducing agent.
-    # Source: Sigma-Aldrich ethanol SDS Section 2 (highly flammable);
-    # CAMEO Chemicals reactive group "Alcohols and Polyols".
-    "ethanol": {
-        "alcohols",
-        "alcohol",
-        "flammable liquids",
-        "reducing agents",
-        "organic solvents",
-    },
+    # Textbook: a strong mineral acid; aqueous hydrogen chloride, which is why sodium
+    # hydroxide's "Hydrogen halides" entry is worth a person's review.
+    "hydrochloric acid": {"acids", "strong acids", "hydrogen halides"},
+    # Textbook: a strong mineral acid, and an oxidising acid when concentrated. Its SDS
+    # (258105) classes it as corrosive (H290), not as an oxidiser.
+    "sulfuric acid": {"acids", "strong acids"} | _OXIDISER_CLASSES,
+    # Textbook: a strong base and an alkali-metal hydroxide (acetone's SDS lists
+    # "alkali hydroxides"). Its SDS (221465) classes it as corrosive only.
+    "sodium hydroxide": {"bases", "strong bases", "alkalis", "alkali hydroxides"},
+    # Textbook: a weak base (a hydrogen carbonate salt).
+    "sodium bicarbonate": {"bases", "carbonates"},
+    # Textbook: a weak organic (carboxylic) acid.
+    "citric acid": {"acids", "organic acids"},
+    # SDS: "Flammable liquids, Category 2, H225" (179124). Textbook: a ketone solvent.
+    "acetone": {"flammable liquids", "ketones", "organic solvents"},
+    # SDS: "Flammable liquids, Category 2, H225" (51976, ethanol_en). Textbook: an
+    # alcohol solvent.
+    "ethanol": {"flammable liquids", "alcohols", "organic solvents"},
+    # SDS: "Flammable liquids, Category 2, H225" (650447, i9516, sds_631090_en_gb).
+    # Textbook: an alcohol solvent.
+    "2-propanol": {"flammable liquids", "alcohols", "organic solvents"},
+    # SDS: "Oxidizing solids, Category 2, H272: May intensify fire; oxidizer" (238511).
+    "potassium permanganate": set(_OXIDISER_CLASSES),
+    # SDS: "Ox. Liq. 1; H271" for the hydrogen peroxide component (216763, 16911).
+    "hydrogen peroxide solution": set(_OXIDISER_CLASSES),
 }
 
 
@@ -211,9 +211,14 @@ def _check_pair_against_sds(
     ---------
     For the pair (A, B):
       1. Exact case-insensitive name match: does A's SDS Section 10 list B by name?
-         Or does B's SDS Section 10 list A by name?
+         Or does B's SDS Section 10 list A by name?  Both SDSs are searched for a
+         named entry before any class match is considered, because a class entry
+         often comes first in the same list: sodium hydroxide's Section 10 lists
+         "Acids" before "sulfuric acid", and stopping at the class would downgrade a
+         named, citable incompatibility to REVIEW.
       2. Class-level match (REVIEW): does A's SDS list a class that B belongs to per
-         CHEMICAL_CLASSES?  Or vice versa?
+         CHEMICAL_CLASSES?  Or vice versa?  Labels match as whole words and are tried
+         in sorted order, so the same pair always gets the same cited reason.
       3. If neither chemical has an SDS in the loaded corpus, fall back to the
          _CITED_FALLBACK_PAIRS dict (CI / empty corpus safety net).
 
@@ -240,67 +245,71 @@ def _check_pair_against_sds(
         elif doc_chem == norm_b:
             sds_for_b.append(doc)
 
-    def _extract_incompat_values(
-        doc: ProcessedDocument,
-    ) -> list[tuple[str, str, str]]:
-        """Return (raw_value, document_id, supplier) for INCOMPATIBILITY claims."""
-        return [
-            (er.value, er.document_id, er.supplier)
-            for er in doc.extractions
-            if er.claim_type == ClaimType.INCOMPATIBILITY
-        ]
+    def _entries(source_docs: list[ProcessedDocument]):
+        """Yield (entry, normalised entry, document_id, supplier) per Section 10 item."""
+        for doc in source_docs:
+            for er in doc.extractions:
+                if er.claim_type != ClaimType.INCOMPATIBILITY:
+                    continue
+                for entry in _split_incompat_value(er.value):
+                    yield entry, _normalise(entry), er.document_id, er.supplier
 
-    classes_a = CHEMICAL_CLASSES.get(norm_a, set())
-    classes_b = CHEMICAL_CLASSES.get(norm_b, set())
+    def _named_in(
+        source_docs: list[ProcessedDocument], norm_target: str, source_chem_name: str
+    ) -> Optional[str]:
+        """REACTIVE if source_docs' Section 10 names the other chemical exactly."""
+        for entry, norm_entry, doc_id, supplier in _entries(source_docs):
+            if norm_entry == norm_target:
+                return (
+                    f"REACTIVE: [{doc_id}] Section 10 - {supplier}: "
+                    f"{source_chem_name} lists {entry!r} as incompatible material"
+                )
+        return None
 
-    def _check_sds_list(
+    def _class_in(
         source_docs: list[ProcessedDocument],
-        norm_target: str,
         target_classes: set[str],
         source_chem_name: str,
         other_chem_name: str,
     ) -> Optional[str]:
-        """Check if source_docs Section 10 mentions target by exact name or by class."""
-        for doc in source_docs:
-            for raw_val, doc_id, supplier in _extract_incompat_values(doc):
-                for entry in _split_incompat_value(raw_val):
-                    norm_entry = _normalise(entry)
-                    # --- Exact name match (case-insensitive) ---
-                    if norm_entry == norm_target:
-                        return (
-                            f"REACTIVE: [{doc_id}] Section 10 - {supplier}: "
-                            f"{source_chem_name} lists {entry!r} as incompatible material"
-                        )
-                    # --- Class-level match -> REVIEW (not REACTIVE) ---
-                    # We never infer class from the chemical name (CLAUDE.md).
-                    # We only use the CHEMICAL_CLASSES table where every entry is cited.
-                    for cls in target_classes:
-                        if norm_entry == cls:
-                            return (
-                                f"REVIEW: [{doc_id}] Section 10 - {supplier}: "
-                                f"{source_chem_name} lists the class '{entry}'; "
-                                f"check whether {other_chem_name} belongs to it -- "
-                                f"see CHEMICAL_CLASSES in "
-                                f"agents/agent_b_analysis/apriori_discovery.py"
-                            )
-                        # Class label as substring of a longer entry phrase
-                        # e.g. entry "strong acids and oxidizing agents" -> cls "acids"
-                        if cls in norm_entry and len(cls) >= 5:
-                            return (
-                                f"REVIEW: [{doc_id}] Section 10 - {supplier}: "
-                                f"{source_chem_name} mentions '{entry}' which may "
-                                f"include the class '{cls}' that {other_chem_name} "
-                                f"belongs to -- verify membership"
-                            )
+        """REVIEW if source_docs' Section 10 names a class the other chemical is in.
+
+        We never infer class from the chemical name (CLAUDE.md); membership comes
+        only from CHEMICAL_CLASSES, where every entry states its source.
+        """
+        for entry, norm_entry, doc_id, supplier in _entries(source_docs):
+            for cls in sorted(target_classes):
+                if norm_entry == cls:
+                    return (
+                        f"REVIEW: [{doc_id}] Section 10 - {supplier}: "
+                        f"{source_chem_name} lists the class '{entry}'; "
+                        f"check whether {other_chem_name} belongs to it"
+                    )
+                # Whole-word match inside a longer entry, e.g. "Strong oxidizing
+                # agents" contains "oxidizing agents".
+                if re.search(rf"\b{re.escape(cls)}\b", norm_entry):
+                    return (
+                        f"REVIEW: [{doc_id}] Section 10 - {supplier}: "
+                        f"{source_chem_name} mentions '{entry}', which names the "
+                        f"class '{cls}' that {other_chem_name} belongs to -- "
+                        f"verify membership"
+                    )
         return None
 
-    # Check A's SDS for B (or B's classes)
-    result = _check_sds_list(sds_for_a, norm_b, classes_b, chem_a, chem_b)
+    classes_a = CHEMICAL_CLASSES.get(norm_a, set())
+    classes_b = CHEMICAL_CLASSES.get(norm_b, set())
+
+    # Pass 1: a named entry in either SDS (strongest, citable evidence).
+    result = _named_in(sds_for_a, norm_b, chem_a) or _named_in(
+        sds_for_b, norm_a, chem_b
+    )
     if result:
         return result
 
-    # Check B's SDS for A (or A's classes)
-    result = _check_sds_list(sds_for_b, norm_a, classes_a, chem_b, chem_a)
+    # Pass 2: a class entry in either SDS (needs a person to confirm membership).
+    result = _class_in(sds_for_a, classes_b, chem_a, chem_b) or _class_in(
+        sds_for_b, classes_a, chem_b, chem_a
+    )
     if result:
         return result
 
@@ -354,7 +363,9 @@ def check_itemset_reactivity(
             pair_label = f"{chem_a} + {chem_b}"
             return f"{status} [pair: {pair_label}]"
         if status.startswith("REVIEW:"):
-            review_statuses.append(f"[pair {chem_a} + {chem_b}] {status}")
+            # Pair label goes last, as for REACTIVE: consumers read the status
+            # word before the first ":" (ui/src/components/CoStoragePanel.jsx).
+            review_statuses.append(f"{status} [pair: {chem_a} + {chem_b}]")
 
     if review_statuses:
         # Surface the first (and most important) REVIEW

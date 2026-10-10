@@ -10,25 +10,25 @@ rather than relying on the hand-written KNOWN_INCOMPATIBLE_PAIRS dict.  The mine
 Apriori output (support/confidence/lift) is unchanged; only the labelling logic changed.
 """
 
-import pytest
-
-from extraction.models import (
-    ClaimType,
-    ExtractionMethod,
-    ExtractionResult,
-    SDSMetadata,
-    SourceAuthority,
-    ProcessedDocument,
-)
 from datetime import date
 
+import pytest
+
 from agents.agent_b_analysis.apriori_discovery import (
+    CHEMICAL_CLASSES,
     CoStoragePatternMiner,
     _check_pair_against_sds,
     _normalise,
     _split_incompat_value,
     check_itemset_reactivity,
-    CHEMICAL_CLASSES,
+)
+from extraction.models import (
+    ClaimType,
+    ExtractionMethod,
+    ExtractionResult,
+    ProcessedDocument,
+    SDSMetadata,
+    SourceAuthority,
 )
 
 # ---------------------------------------------------------------------------
@@ -395,3 +395,110 @@ def test_regression_sodium_hydroxide_acetone_flagged_no_docs(
     assert (
         flagged is not None
     ), f"Expected REACTIVE rule citing [221465] via fallback dict. Got: {rules}"
+
+
+# ---------------------------------------------------------------------------
+
+# Named entries outrank class entries; class labels match whole words only
+
+# ---------------------------------------------------------------------------
+
+
+# Order as in the real sodium hydroxide SDS [221465] Section 10: the class
+
+# "Acids" comes before "sulfuric acid" by name.
+
+_NAOH_CLASS_FIRST_DOC = _make_doc(
+    chemical_name="Sodium hydroxide",
+    document_id="221465",
+    supplier="Sigma-Aldrich",
+    incompat_values=["Acetone, Hydrogen halides, Acids, sulfuric acid, Water"],
+)
+
+
+# Real acetone SDS [179124] Section 10 lists "Alkali metals" and
+
+# "Strong oxidizing agents".
+
+_ACETONE_DOC = _make_doc(
+    chemical_name="Acetone",
+    document_id="179124",
+    supplier="Sigma-Aldrich",
+    incompat_values=["Strong oxidizing agents, Alkali metals"],
+)
+
+
+def test_named_entry_beats_an_earlier_class_entry_in_the_same_sds():
+    """Regression: "Acids" came first, so NaOH + sulfuric acid was REVIEW
+
+    although the same SDS names sulfuric acid explicitly."""
+
+    status = _check_pair_against_sds(
+        "Sodium hydroxide", "Sulfuric acid", [_NAOH_CLASS_FIRST_DOC]
+    )
+
+    assert status is not None
+
+    assert status.startswith("REACTIVE:"), status
+
+    assert "sulfuric acid" in status
+
+
+def test_named_entry_in_either_sds_beats_a_class_entry_in_the_other():
+    """Regression: acetone's SDS was checked first and its "Alkali metals"
+
+    entry won, although NaOH's SDS names acetone explicitly."""
+
+    status = _check_pair_against_sds(
+        "Acetone", "Sodium hydroxide", [_ACETONE_DOC, _NAOH_CLASS_FIRST_DOC]
+    )
+
+    assert status is not None
+
+    assert status.startswith("REACTIVE:"), status
+
+    assert "[221465]" in status
+
+
+def test_alkali_metals_is_not_a_class_sodium_hydroxide_belongs_to():
+    """Sodium hydroxide is an alkali-metal hydroxide, not an alkali metal."""
+
+    assert (
+        _check_pair_against_sds("Acetone", "Sodium hydroxide", [_ACETONE_DOC]) is None
+    )
+
+
+def test_class_label_matches_as_whole_words_inside_a_longer_entry():
+    """ "Strong oxidizing agents" names the class potassium permanganate's own
+
+    SDS puts it in (Oxidizing solids, H272): a REVIEW, not a REACTIVE."""
+
+    status = _check_pair_against_sds(
+        "Acetone", "Potassium permanganate", [_ACETONE_DOC]
+    )
+
+    assert status is not None
+
+    assert status.startswith("REVIEW:"), status
+
+
+def test_class_tables_hold_only_plural_class_nouns():
+    """A singular label such as "alkali" or "acid" would match an unrelated
+
+    class ("Alkali metals", "Acid anhydrides")."""
+
+    for name, classes in CHEMICAL_CLASSES.items():
+
+        for label in classes:
+
+            assert label.endswith("s"), f"{name}: {label!r}"
+
+
+def test_itemset_status_starts_with_its_status_word():
+    """Consumers (the UI panel, the LLM tool) read the word before the first
+    ":"; a REVIEW used to come back as "[pair A + B] REVIEW: ..."."""
+    status = check_itemset_reactivity(
+        ["Hydrochloric acid", "Sodium hydroxide"], [_NAOH_CLASS_FIRST_DOC]
+    )
+    assert status.startswith("REVIEW:"), status
+    assert status.endswith("[pair: Hydrochloric acid + Sodium hydroxide]"), status

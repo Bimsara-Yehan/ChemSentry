@@ -11,23 +11,27 @@ import { rise, stagger } from './motionVariants';
 // labelled as such, and never presents a mined pattern as a verdict.
 
 // Colour for the backend's status prefix ("VIOLENT REACTION", "REACTIVE",
-// "COMPATIBLE", ...). The backend answers "COMPATIBLE" for any pair that is
-// simply *not in* its lookup, so that status means "no known warning on
-// file", not "safe to store together". It is shown neutral, never green:
-// an absence of evidence must not look like a safety verdict (CLAUDE.md).
+// "REVIEW", "NO KNOWN WARNING"). "NO KNOWN WARNING" means neither SDS's
+// Section 10 names the other chemical or a class it belongs to -- not "safe
+// to store together" -- so it is shown neutral, never green: an absence of
+// evidence must not look like a safety verdict (CLAUDE.md). "COMPATIBLE" is
+// the older backend's word for the same thing.
 function classify(status = '') {
   const prefix = (status.split(':')[0] || 'UNCLASSIFIED').trim();
   const s = prefix.toUpperCase();
-  if (s.startsWith('COMPATIBLE')) return { tone: 'neutral', label: 'No known warning on file' };
-  const tone = /VIOLENT|TOXIC|EXPLOSIVE/.test(s) ? 'danger' : 'warning';
+  if (s.startsWith('NO KNOWN WARNING') || s.startsWith('COMPATIBLE')) {
+    return { tone: 'neutral', label: 'No known warning on file' };
+  }
+  // REACTIVE means an SDS names the other chemical as incompatible -- the
+  // strongest evidence the SDS path gives -- so it shares the danger tone.
+  // REVIEW (a class match a person must confirm) stays amber.
+  const tone = /VIOLENT|TOXIC|EXPLOSIVE|REACTIVE/.test(s) ? 'danger' : 'warning';
   return { tone, label: prefix.charAt(0) + prefix.slice(1).toLowerCase() };
 }
 
-// Pairs only, each shown once (A→B and B→A are the same pair). The lookup
-// matches exact pairs, so its answer for a group of three or more says
-// nothing about the pairs inside it -- e.g. it reported "Compatible" for a
-// group containing a violent-reaction pair. Every pair of such a group is
-// already listed on its own, so larger groups are left out.
+// Pairs only, each shown once (A→B and B→A are the same pair). A group of
+// three or more is labelled from one of its flagged pairs, and every pair of
+// it is already listed on its own, so larger groups would only repeat a row.
 function pairsOnly(rules) {
   const seen = new Map();
   for (const r of rules) {
