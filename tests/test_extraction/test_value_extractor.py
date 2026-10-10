@@ -65,6 +65,39 @@ def test_storage_temp_label_range_conventional() -> None:
     assert by_claim["storage_temperature_max"] == "25"
 
 
+def test_storage_temp_panreac_symbol_comparators() -> None:
+    """Verbatim pdfplumber output from a real PanReac (ITW Reagents) 2-Propanol
+    SDS, Section 7.2: bare "<"/">" comparators, an explicit "+" sign, and the
+    minimum written with "º" (U+00BA, masculine ordinal) instead of "°".
+    Before the fix none of these were recognised and the limits were lost."""
+    text = (
+        "\xb7 Minimum storage temperature:> 2\xbaC\n"
+        "\xb7 Recommended storage temperature:< +25\xb0C\n"
+    )
+    results = extract_storage_temp(text, chemical="2-Propanol")
+    by_claim = {r.claim_type.value: r.value for r in results}
+
+    assert by_claim == {"storage_temperature_min": "2", "storage_temperature_max": "25"}
+
+
+def test_storage_temp_carl_roth_en_dash_range() -> None:
+    """Verbatim from a real Carl Roth Ethanol SDS (article 9065), Section 7."""
+    text = "Recommended storage temperature: 15 – 25 \xb0C."
+    results = extract_storage_temp(text, chemical="Ethanol")
+    by_claim = {r.claim_type.value: r.value for r in results}
+
+    assert by_claim["storage_temperature_min"] == "15"
+    assert by_claim["storage_temperature_max"] == "25"
+
+
+def test_storage_temp_room_temperature_wording_yields_nothing() -> None:
+    """Verbatim from a real PanReac potassium permanganate SDS. "Room
+    Temperature" is not a number; extracting anything here would invent a
+    threshold the source document never states."""
+    text = "\xb7 Recommended storage temperature:Room Temperature\n\xb7 Storage class: 5.1 B"
+    assert extract_storage_temp(text, chemical="Potassium permanganate") == []
+
+
 def test_storage_temp_label_wrapped_across_lines() -> None:
     """Real pdfplumber output for a two-column PDF layout: the label wraps
     so "temperature" lands on the line after the value, e.g.
