@@ -1,4 +1,30 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
+import {
+  Activity,
+  Bell,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardCheck,
+  Droplets,
+  FileText,
+  FlaskConical,
+  GitMerge,
+  LoaderCircle,
+  LogOut,
+  Plus,
+  RefreshCw,
+  ScrollText,
+  Search,
+  ShieldCheck,
+  Thermometer,
+  TriangleAlert,
+  Upload,
+  Users,
+  Warehouse,
+  X,
+} from 'lucide-react';
 import './index.css';
 import {
   addChemicalToZone,
@@ -17,6 +43,17 @@ import {
   submitZoneTelemetry,
   uploadSdsDocument,
 } from './api';
+import LoginScreen from './components/LoginScreen';
+import StorageLimitsTable from './components/StorageLimitsTable';
+import { EmptyState, Field, Loading, Notice, PageHeader, SourceCell, StateBadge } from './components/ui';
+import {
+  citationLabel,
+  formatDateTime,
+  formatValue,
+  humanizeAction,
+  humanizeMetric,
+  timeAgo,
+} from './format';
 
 // Demo reading profiles per zone -- NOT a hardcoded safety threshold (the
 // deterministic safety layer never sees these, only the resulting
@@ -34,94 +71,84 @@ const DEMO_TEMPERATURES = {
 };
 
 const ZONE_LABELS = {
-  Zone_A: 'Zone A — Solvent Storage',
-  Zone_B: 'Zone B — Acid & Base Storage',
-  Zone_C: 'Zone C — Oxidizer Storage',
+  Zone_A: 'Solvent storage',
+  Zone_B: 'Acid & base storage',
+  Zone_C: 'Oxidizer storage',
 };
+
+const ROLE_LABELS = { viewer: 'Viewer', analyst: 'Analyst', admin: 'Admin' };
+
+const ALERT_FILTERS = [
+  { id: 'pending_review', label: 'Pending' },
+  { id: 'approved', label: 'Approved' },
+  { id: 'rejected', label: 'Rejected' },
+  { id: 'all', label: 'All' },
+];
+
+const ALERT_PAGE_SIZE = 20;
+const AUDIT_PAGE_SIZE = 25;
+
+function zoneName(zoneId) {
+  return zoneId.replace('_', ' ');
+}
+
+const DETAIL_LABELS = { zone_id: '', chemical_name: 'Chemical', metric_name: 'Metric' };
+
+function formatDetailValue(key, value) {
+  if (value == null) return '—';
+  if (typeof value === 'object') return JSON.stringify(value);
+  if (key === 'zone_id') return zoneName(String(value));
+  if (key === 'metric_name') return humanizeMetric(String(value));
+  return String(value);
+}
 
 function formatSecondsAgo(sinceDate, nowMs) {
   if (!sinceDate) return null;
   const seconds = Math.max(0, Math.round((nowMs - sinceDate.getTime()) / 1000));
   if (seconds < 1) return 'just now';
-  if (seconds === 1) return '1s ago';
   return `${seconds}s ago`;
 }
 
-// Mirrors the backend RBAC gates in api/main.py: viewer is read-only on every
-// mutating route (telemetry, query, sign-off); analyst adds telemetry + query;
-// only admin can sign off an alert (require_role(UserRole.ADMIN)).
-const ROLE_INFO = {
-  viewer: {
-    label: 'Read-only access',
-    detail: 'You can monitor zones and alerts. Submitting readings, running queries, and signing off alerts require an analyst or admin account.',
-  },
-  analyst: {
-    label: 'Analyst access',
-    detail: 'You can submit telemetry readings and query retrieved safety data. Alert sign-off requires an admin account.',
-  },
-  admin: {
-    label: 'Admin access',
-    detail: 'Full access, including approving or rejecting alerts.',
-  },
-};
+// Alert reasoning embeds its citation as "... Source: [id] Section N - ...
+// [policy_version=x]"; pull it out so the expanded row can show the source
+// on its own line.
+function citationFromReasoning(reasoning) {
+  const m = /Source:\s*(\[.*?)(?:\s*\[policy_version=[^\]]*\])?\s*$/.exec(reasoning || '');
+  return m ? m[1] : null;
+}
 
-function LoginScreen({ onLogin, loading, error }) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onLogin(username, password);
-  };
-
+function HealthPill({ health }) {
+  const tone = !health ? 'checking' : health.status === 'ok' ? 'ok' : health.status === 'down' ? 'down' : 'degraded';
+  const label = {
+    checking: 'Checking…',
+    ok: 'System online',
+    degraded: 'Degraded',
+    down: 'Unreachable',
+  }[tone];
+  const title =
+    health && health.status !== 'ok'
+      ? `database: ${health.database ?? 'unknown'} · mqtt_broker: ${health.mqtt_broker ?? 'unknown'}`
+      : undefined;
   return (
-    <div
-      style={{
-        minHeight: '80vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <div className="card" style={{ maxWidth: '380px', width: '100%' }}>
-        <div className="card-title" style={{ marginBottom: '4px' }}>
-          Sign in to ChemSentry
-        </div>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '18px' }}>
-          Enter your credentials to access the monitoring dashboard.
-        </p>
-        <form
-          onSubmit={handleSubmit}
-          style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
-        >
-          <input
-            className="input-field"
-            placeholder="Username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-          />
-          <input
-            className="input-field"
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <button type="submit" className="action-btn" disabled={loading}>
-            {loading ? 'Signing in…' : 'Sign In'}
-          </button>
-        </form>
-        {error && (
-          <div className="provenance-box is-error" style={{ marginTop: '16px' }}>
-            <div className="provenance-title">Sign-in failed</div>
-            {error}
-          </div>
-        )}
-        <p className="help-text">
-          Demo accounts — viewer_user / viewer123 · analyst_user / analyst123 ·
-          admin_user / admin123
-        </p>
+    <span className={`health-pill is-${tone}`} title={title}>
+      <span className="health-dot" />
+      {label}
+    </span>
+  );
+}
+
+function Metric({ icon: Icon, label, value, unit, tone, note }) {
+  return (
+    <div className={`metric${tone ? ` metric-${tone}` : ''}`}>
+      <div className="metric-label">
+        <Icon size={14} aria-hidden="true" />
+        {label}
       </div>
+      <div className="metric-value">
+        {value ?? '—'}
+        <span className="metric-unit">{unit}</span>
+      </div>
+      {note && <div className="metric-note">{note}</div>}
     </div>
   );
 }
@@ -133,6 +160,7 @@ function App() {
   const [loginError, setLoginError] = useState('');
 
   const [activeTab, setActiveTab] = useState('live');
+  const [newAlertNotice, setNewAlertNotice] = useState(null);
   // refreshAlerts is called from a setInterval closure set up once per
   // effect run -- reading `activeTab` directly there would see whatever
   // value was current when that closure was created, not the live one. The
@@ -163,6 +191,9 @@ function App() {
   const [alerts, setAlerts] = useState([]);
   const [alertsError, setAlertsError] = useState('');
   const [signOffNote, setSignOffNote] = useState('');
+  const [alertFilter, setAlertFilter] = useState('pending_review');
+  const [alertLimit, setAlertLimit] = useState(ALERT_PAGE_SIZE);
+  const [expandedAlertId, setExpandedAlertId] = useState(null);
 
   // Admin User Management State
   const [users, setUsers] = useState([]);
@@ -192,6 +223,7 @@ function App() {
   const [uploadSuccess, setUploadSuccess] = useState('');
   const [uploadError, setUploadError] = useState('');
   const [uploadLoading, setUploadLoading] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Header health badge -- real GET /health, not a hardcoded label.
   const [health, setHealth] = useState(null);
@@ -231,7 +263,6 @@ function App() {
   // so comparing against it never itself triggers a re-render; it only
   // matters at the moment a new fetch resolves.
   const knownAlertIds = useRef(null);
-  const [newAlertNotice, setNewAlertNotice] = useState(null);
 
   const refreshAlerts = async (authToken) => {
     try {
@@ -243,8 +274,8 @@ function App() {
           const newest = newOnes[0];
           setNewAlertNotice(
             newOnes.length === 1
-              ? `New alert: ${newest.chemical_name} excursion in ${newest.zone_id}`
-              : `${newOnes.length} new alerts, most recent: ${newest.chemical_name} in ${newest.zone_id}`
+              ? `${newest.chemical_name} exceeded its limit in ${zoneName(newest.zone_id)}`
+              : `${newOnes.length} new alerts · latest: ${newest.chemical_name}, ${zoneName(newest.zone_id)}`
           );
         }
       }
@@ -271,7 +302,7 @@ function App() {
 
   const refreshAuditLogs = async (authToken, offset = 0) => {
     try {
-      const res = await getAuditLog(authToken, 25, offset);
+      const res = await getAuditLog(authToken, AUDIT_PAGE_SIZE, offset);
       setAuditLogs(res?.entries || []);
       setAuditTotal(res?.total || 0);
       setAuditOffset(offset);
@@ -319,7 +350,7 @@ function App() {
   }, [token, activeTab]);
 
   useEffect(() => {
-    if (activeTab !== 'live') return undefined;
+    if (activeTab !== 'live' && activeTab !== 'supervisor') return undefined;
     const tick = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(tick);
   }, [activeTab]);
@@ -389,6 +420,7 @@ function App() {
     try {
       await signOffAlert(token, alertId, approved, signOffNote);
       setSignOffNote('');
+      setExpandedAlertId(null);
       await refreshAlerts(token);
     } catch (err) {
       setAlertsError(err.message);
@@ -401,7 +433,7 @@ function App() {
     setUsersError('');
     try {
       const res = await createUser(token, newUsername, newPassword, newUserRole);
-      setUserCreateSuccess(`User '${res.username}' (${res.role}) created successfully.`);
+      setUserCreateSuccess(`${res.username} was added as ${ROLE_LABELS[res.role] || res.role}.`);
       setNewUsername('');
       setNewPassword('');
       await refreshUsers(token);
@@ -417,7 +449,7 @@ function App() {
     try {
       const chems = newZoneChems.split(',').map((c) => c.trim()).filter(Boolean);
       await createZone(token, newZoneId, chems);
-      setZoneManageSuccess(`Zone '${newZoneId}' created successfully.`);
+      setZoneManageSuccess(`${zoneName(newZoneId)} created.`);
       setNewZoneId('');
       setNewZoneChems('');
       await refreshZones(token);
@@ -433,7 +465,7 @@ function App() {
     setZonesError('');
     try {
       await addChemicalToZone(token, selectedZoneForChem, addChemName);
-      setZoneManageSuccess(`Chemical '${addChemName}' added to ${selectedZoneForChem}.`);
+      setZoneManageSuccess(`${addChemName} added to ${zoneName(selectedZoneForChem)}.`);
       setAddChemName('');
       await refreshZones(token);
     } catch (err) {
@@ -446,7 +478,7 @@ function App() {
     setZonesError('');
     try {
       await removeChemicalFromZone(token, zoneId, chemName);
-      setZoneManageSuccess(`Chemical '${chemName}' removed from ${zoneId}.`);
+      setZoneManageSuccess(`${chemName} removed from ${zoneName(zoneId)}.`);
       await refreshZones(token);
     } catch (err) {
       setZonesError(err.message);
@@ -461,8 +493,9 @@ function App() {
     setUploadError('');
     try {
       const res = await uploadSdsDocument(token, uploadFile, uploadChemName, uploadSupplier);
-      setUploadSuccess(`SDS '${res.document_id}' for '${res.chemical_name}' uploaded & indexed.`);
+      setUploadSuccess(`${res.chemical_name} (SDS ${res.document_id}) indexed.`);
       setUploadFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
       setUploadChemName('');
       setUploadSupplier('');
     } catch (err) {
@@ -474,945 +507,938 @@ function App() {
 
   if (!token) {
     return (
-      <div className="app-container">
-        <header className="app-header">
-          <div className="brand-section">
-            <div className="brand-logo">CS</div>
-            <div className="brand-title">
-              <h1>ChemSentry</h1>
-              <p>Chemical Safety Monitoring</p>
-            </div>
-          </div>
-        </header>
+      <MotionConfig reducedMotion="user">
         <LoginScreen onLogin={handleLogin} loading={loginLoading} error={loginError} />
-      </div>
+      </MotionConfig>
     );
   }
 
+  const zoneIds = [...new Set([...Object.keys(ZONE_LABELS), ...Object.keys(zones)])];
   const currentZoneData = zones[activeZone];
   const demoTemps = DEMO_TEMPERATURES[activeZone] || { safe: 20.0, excursion: 40.0 };
-  const pendingAlertCount = alerts.filter((a) => a.status === 'pending_review').length;
   const isViewer = currentUser?.role === 'viewer';
   const isAdmin = currentUser?.role === 'admin';
 
+  const alertCounts = {
+    pending_review: alerts.filter((a) => a.status === 'pending_review').length,
+    approved: alerts.filter((a) => a.status === 'approved').length,
+    rejected: alerts.filter((a) => a.status === 'rejected').length,
+    all: alerts.length,
+  };
+  const filteredAlerts =
+    alertFilter === 'all' ? alerts : alerts.filter((a) => a.status === alertFilter);
+  const visibleAlerts = filteredAlerts.slice(0, alertLimit);
+
+  const unknownChemicals = currentZoneData
+    ? currentZoneData.chemicals.filter((chem) => {
+        const own = currentZoneData.checks.filter((c) => c.chemical_name === chem);
+        return own.length === 0 || own.every((c) => c.threshold_value == null);
+      })
+    : [];
+
+  const tabs = [
+    { id: 'live', label: 'Live environment', icon: Activity },
+    { id: 'reconciliation', label: 'SDS search', icon: Search },
+    { id: 'supervisor', label: 'Sign-off queue', icon: ClipboardCheck, count: alertCounts.pending_review },
+    ...(isAdmin
+      ? [
+          { id: 'users', label: 'Users', icon: Users, onOpen: () => refreshUsers(token) },
+          { id: 'zones', label: 'Zones & documents', icon: Warehouse, onOpen: () => refreshZones(token) },
+          { id: 'audit', label: 'Audit trail', icon: ScrollText, onOpen: () => refreshAuditLogs(token, 0) },
+        ]
+      : []),
+  ];
+
+  const openTab = (tab) => {
+    setActiveTab(tab.id);
+    tab.onOpen?.();
+  };
+
   return (
-    <div className="app-container">
-      {/* App Header */}
-      <header className="app-header">
-        <div className="brand-section">
-          <div className="brand-logo">CS</div>
-          <div className="brand-title">
-            <h1>ChemSentry</h1>
-            <p>Chemical Safety Monitoring</p>
-          </div>
-        </div>
-        <div className="header-status">
-          <div
-            className={`status-badge${
-              health && health.status !== 'ok' ? ` is-${health.status === 'down' ? 'down' : 'degraded'}` : ''
-            }`}
-            title={
-              health && health.status !== 'ok'
-                ? `database: ${health.database ?? 'unknown'} · mqtt_broker: ${health.mqtt_broker ?? 'unknown'}`
-                : undefined
-            }
-          >
-            <span className="pulse-dot"></span>
-            {!health
-              ? 'Checking…'
-              : health.status === 'ok'
-              ? 'System Online'
-              : health.status === 'degraded'
-              ? 'Degraded'
-              : 'Unreachable'}
-          </div>
-          <div className="user-chip">
-            <span>
-              <strong>{currentUser?.username}</strong>
-            </span>
-            <span className="role-tag">{currentUser?.role}</span>
-            <button className="logout-btn" onClick={handleLogout}>
-              Log out
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Navigation Tabs */}
-      <nav className="nav-tabs">
-        <button
-          className={`tab-btn ${activeTab === 'live' ? 'active' : ''}`}
-          onClick={() => setActiveTab('live')}
-        >
-          Live Environment
-        </button>
-        <button
-          className={`tab-btn ${activeTab === 'reconciliation' ? 'active' : ''}`}
-          onClick={() => setActiveTab('reconciliation')}
-        >
-          Retrieval &amp; Reconciliation
-        </button>
-        <button
-          className={`tab-btn ${activeTab === 'supervisor' ? 'active' : ''}`}
-          onClick={() => setActiveTab('supervisor')}
-        >
-          Sign-Off Queue
-          {pendingAlertCount > 0 && <span className="tab-count">{pendingAlertCount}</span>}
-        </button>
-        {isAdmin && (
-          <>
-            <button
-              className={`tab-btn ${activeTab === 'users' ? 'active' : ''}`}
-              onClick={() => {
-                setActiveTab('users');
-                refreshUsers(token);
-              }}
-            >
-              User Management
-            </button>
-            <button
-              className={`tab-btn ${activeTab === 'zones' ? 'active' : ''}`}
-              onClick={() => {
-                setActiveTab('zones');
-                refreshZones(token);
-              }}
-            >
-              Zone Inventory
-            </button>
-            <button
-              className={`tab-btn ${activeTab === 'audit' ? 'active' : ''}`}
-              onClick={() => {
-                setActiveTab('audit');
-                refreshAuditLogs(token, 0);
-              }}
-            >
-              Audit Trail
-            </button>
-          </>
-        )}
-      </nav>
-
-      <div className={`role-banner role-banner-${currentUser?.role}`}>
-        <span className="role-banner-label">{ROLE_INFO[currentUser?.role]?.label}</span>
-        <span className="role-banner-detail">{ROLE_INFO[currentUser?.role]?.detail}</span>
-      </div>
-
-      {newAlertNotice && (
-        <div className="new-alert-toast">
-          <span className="state-badge state-WARNING">New</span>
-          <span>{newAlertNotice}</span>
-          <button
-            className="new-alert-toast-view"
-            onClick={() => setActiveTab('supervisor')}
-          >
-            View
-          </button>
-          <button
-            className="new-alert-toast-dismiss"
-            aria-label="Dismiss"
-            onClick={() => setNewAlertNotice(null)}
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {/* Tab 1: Live Environment View */}
-      {activeTab === 'live' && (
-        <div className="dashboard-grid">
-          <div className="main-content">
-            <div className="card">
-              <div className="card-header">
-                <div className="card-title">
-                  Zone Telemetry
-                  <span className="status-badge" style={{ marginLeft: '10px' }}>
-                    <span className="pulse-dot"></span>
-                    Live
+    <MotionConfig reducedMotion="user">
+      <div className="app-shell">
+        <header className="topbar">
+          <div className="topbar-inner">
+            <div className="topbar-row">
+              <div className="brand">
+                <span className="brand-mark">
+                  <FlaskConical size={16} strokeWidth={2.2} />
+                </span>
+                <span className="brand-name">ChemSentry</span>
+              </div>
+              <div className="topbar-right">
+                <HealthPill health={health} />
+                <div className="user-menu">
+                  <span className="avatar" aria-hidden="true">
+                    {(currentUser?.username || '?').charAt(0).toUpperCase()}
                   </span>
-                  {zonesLastUpdated && (
-                    <span
-                      style={{
-                        marginLeft: '8px',
-                        fontSize: '12px',
-                        color: 'var(--text-dim)',
-                        fontWeight: 400,
+                  <span className="user-meta">
+                    <strong>{currentUser?.username}</strong>
+                    <span>{ROLE_LABELS[currentUser?.role] || currentUser?.role}</span>
+                  </span>
+                  <button className="icon-btn" onClick={handleLogout} title="Log out" aria-label="Log out">
+                    <LogOut size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <nav className="nav-tabs" aria-label="Sections">
+              {tabs.map((tab) => {
+                const Icon = tab.icon;
+                const active = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    className={`tab-btn${active ? ' active' : ''}`}
+                    onClick={() => openTab(tab)}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <Icon size={15} aria-hidden="true" />
+                    {tab.label}
+                    {tab.count > 0 && <span className="tab-count">{tab.count}</span>}
+                    {active && <motion.span layoutId="tab-underline" className="tab-underline" />}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        </header>
+
+        <AnimatePresence>
+          {newAlertNotice && (
+            <motion.div
+              className="toast"
+              role="status"
+              initial={{ opacity: 0, y: -12, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+            >
+              <span className="toast-icon">
+                <Bell size={16} />
+              </span>
+              <div className="toast-body">
+                <div className="toast-title">New alert</div>
+                <div>{newAlertNotice}</div>
+              </div>
+              <button className="toast-action" onClick={() => setActiveTab('supervisor')}>
+                Review
+              </button>
+              <button className="icon-btn" aria-label="Dismiss" onClick={() => setNewAlertNotice(null)}>
+                <X size={15} />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <main className="page">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+          >
+            {activeTab === 'live' && (
+              <>
+                <PageHeader
+                  title="Live environment"
+                  subtitle="Current readings and storage-limit checks for each zone."
+                />
+
+                <div className="zone-switcher" role="tablist" aria-label="Zones">
+                  {zoneIds.map((z) => {
+                    const state = zones[z]?.safety_state;
+                    return (
+                      <button
+                        key={z}
+                        role="tab"
+                        aria-selected={activeZone === z}
+                        className={`zone-card${activeZone === z ? ' active' : ''}`}
+                        onClick={() => setActiveZone(z)}
+                      >
+                        <span className="zone-card-text">
+                          <span className="zone-card-name">{zoneName(z)}</span>
+                          <span className="zone-card-label">{ZONE_LABELS[z] || 'Custom zone'}</span>
+                        </span>
+                        {state && <span className={`zone-dot zone-dot-${state}`} title={state} />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {zonesError && (
+                  <Notice tone="error" icon={TriangleAlert} title="Couldn't load zone data">
+                    {zonesError}
+                  </Notice>
+                )}
+
+                <div className="dashboard-grid">
+                  <div className="main-col">
+                    <div className="card">
+                      {currentZoneData ? (
+                        <>
+                          <div className="card-head">
+                            <div>
+                              <div className="eyebrow">{zoneName(activeZone)}</div>
+                              <h3 className="card-heading">{ZONE_LABELS[activeZone] || 'Custom zone'}</h3>
+                            </div>
+                            <div className="card-head-right">
+                              {zonesLastUpdated && (
+                                <span className="live-indicator">
+                                  <span className="live-dot" />
+                                  Updated {formatSecondsAgo(zonesLastUpdated, nowTick)}
+                                </span>
+                              )}
+                              <StateBadge state={currentZoneData.safety_state} size="lg" />
+                            </div>
+                          </div>
+
+                          <div className="metrics-row">
+                            <Metric
+                              icon={Thermometer}
+                              label="Temperature"
+                              value={currentZoneData.last_reading.temperature_celsius}
+                              unit="°C"
+                              tone={currentZoneData.is_excursion ? 'warning' : undefined}
+                            />
+                            <Metric
+                              icon={Droplets}
+                              label="Humidity"
+                              value={currentZoneData.last_reading.humidity_percent}
+                              unit="%"
+                              note="Not evaluated — no limit retrieved"
+                            />
+                          </div>
+
+                          {currentZoneData.safety_state === 'UNKNOWN' && unknownChemicals.length > 0 && (
+                            <Notice tone="neutral" icon={FileText}>
+                              {unknownChemicals.length === currentZoneData.chemicals.length
+                                ? `None of the ${unknownChemicals.length} chemicals here has a storage limit in its SDS`
+                                : `${unknownChemicals.length} of ${currentZoneData.chemicals.length} chemicals here have no storage limit in their SDS`}
+                              , so the zone stays UNKNOWN rather than being assumed safe.
+                            </Notice>
+                          )}
+
+                          <div className="section-title">Storage limits</div>
+                          <StorageLimitsTable
+                            chemicals={currentZoneData.chemicals || []}
+                            checks={currentZoneData.checks || []}
+                          />
+                        </>
+                      ) : (
+                        !zonesError && <Loading label="Loading zone data…" />
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="side-col">
+                    <div className="card">
+                      <h3 className="card-heading">Sensor simulator</h3>
+                      <p className="card-sub">Send a test reading to {zoneName(activeZone)}.</p>
+                      <div className="stack-sm">
+                        <button
+                          className="action-btn btn-warning btn-block"
+                          onClick={() => handleSendReading(demoTemps.excursion)}
+                          disabled={isViewer || telemetryLoading}
+                        >
+                          <Thermometer size={15} />
+                          Excursion · {demoTemps.excursion} °C
+                        </button>
+                        <button
+                          className="action-btn btn-secondary btn-block"
+                          onClick={() => handleSendReading(demoTemps.safe)}
+                          disabled={isViewer || telemetryLoading}
+                        >
+                          Normal · {demoTemps.safe} °C
+                        </button>
+                      </div>
+                      {isViewer && <p className="help-text">Your role is read-only.</p>}
+                    </div>
+
+                    <div className="card">
+                      <h3 className="card-heading">Status key</h3>
+                      <ul className="legend">
+                        <li>
+                          <StateBadge state="SAFE" size="sm" />
+                          <span>Within every retrieved limit</span>
+                        </li>
+                        <li>
+                          <StateBadge state="WARNING" size="sm" />
+                          <span>A retrieved limit is exceeded</span>
+                        </li>
+                        <li>
+                          <StateBadge state="UNKNOWN" size="sm" />
+                          <span>No limit on file — never assumed safe</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {activeTab === 'reconciliation' && (
+              <>
+                <PageHeader
+                  title="SDS search"
+                  subtitle="Look up a chemical's retrieved storage limits and their sources."
+                />
+                <div className="dashboard-grid">
+                  <div className="main-col">
+                    <div className="card">
+                      <form onSubmit={handleSearch} className="search-bar">
+                        <span className="input-with-icon">
+                          <Search size={16} aria-hidden="true" />
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="Chemical name, e.g. Ethanol"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            disabled={isViewer}
+                            aria-label="Chemical name"
+                          />
+                        </span>
+                        <button type="submit" className="action-btn" disabled={isViewer || queryLoading}>
+                          {queryLoading ? <LoaderCircle size={15} className="spin" /> : null}
+                          Search
+                        </button>
+                      </form>
+                      {isViewer && <p className="help-text">Search requires an analyst or admin role.</p>}
+                    </div>
+
+                    {queryError && (
+                      <Notice tone="error" icon={TriangleAlert} title="Search failed">
+                        {queryError}
+                      </Notice>
+                    )}
+
+                    {queryResult && (
+                      <div className="card">
+                        <div className="card-head">
+                          <div>
+                            <div className="eyebrow">Result</div>
+                            <h3 className="card-heading">{queryResult.query.chemical_name}</h3>
+                          </div>
+                          <span className="lookup-tag" title="A search has no sensor reading, so no SAFE/WARNING verdict is made.">
+                            <StateBadge state={queryResult.evidence.final_safety_state} size="sm" />
+                            Lookup only
+                          </span>
+                        </div>
+
+                        {queryResult.evidence.thresholds.length === 0 ? (
+                          <EmptyState title="No limits found" icon={FileText}>
+                            The current corpus has no storage limits for this name.
+                          </EmptyState>
+                        ) : (
+                          <div className="table-wrap">
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th>Parameter</th>
+                                  <th>Limit</th>
+                                  <th>Source</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {queryResult.evidence.thresholds.map((t, idx) => (
+                                  <tr key={idx}>
+                                    <td className="cell-strong">{humanizeMetric(t.parameter)}</td>
+                                    <td className="limit-value">{formatValue(t.value, t.unit)}</td>
+                                    <td className="cell-source">
+                                      <SourceCell citation={t.version} fallback={t.source_doc_id} />
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+
+                        {queryResult.evidence.conflicts.map((conflict, idx) => (
+                          <Notice key={idx} tone="warning" icon={GitMerge} title="Supplier conflict">
+                            {conflict}
+                          </Notice>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="side-col">
+                    <div className="card">
+                      <h3 className="card-heading">Retrieval pipeline</h3>
+                      <ol className="pipeline">
+                        <li>
+                          <strong>Name matching</strong>
+                          <span>Exact, fuzzy and phonetic</span>
+                        </li>
+                        <li>
+                          <strong>Ranking</strong>
+                          <span>TF-IDF relevance</span>
+                        </li>
+                        <li>
+                          <strong>Reconciliation</strong>
+                          <span>Source authority and conflict checks</span>
+                        </li>
+                        <li>
+                          <strong>Verdict</strong>
+                          <span>Deterministic rules only</span>
+                        </li>
+                      </ol>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {activeTab === 'supervisor' && (
+              <>
+                <PageHeader
+                  title="Sign-off queue"
+                  subtitle="WARNING alerts need admin approval before they are final."
+                />
+
+                <div className="segmented" role="tablist" aria-label="Filter alerts">
+                  {ALERT_FILTERS.map((f) => (
+                    <button
+                      key={f.id}
+                      role="tab"
+                      aria-selected={alertFilter === f.id}
+                      className={`segmented-btn${alertFilter === f.id ? ' active' : ''}`}
+                      onClick={() => {
+                        setAlertFilter(f.id);
+                        setAlertLimit(ALERT_PAGE_SIZE);
+                        setExpandedAlertId(null);
                       }}
                     >
-                      updated {formatSecondsAgo(zonesLastUpdated, nowTick)}
-                    </span>
-                  )}
-                </div>
-                <div className="zone-selector">
-                  {Object.keys(ZONE_LABELS).map((z) => (
-                    <button
-                      key={z}
-                      className={`zone-chip ${activeZone === z ? 'active' : ''}`}
-                      onClick={() => setActiveZone(z)}
-                    >
-                      {z.replace('_', ' ')}
+                      {f.label}
+                      <span className="segmented-count">{alertCounts[f.id]}</span>
                     </button>
                   ))}
                 </div>
-              </div>
 
-              {zonesError && (
-                <div className="provenance-box is-error">
-                  <div className="provenance-title">Failed to load zone data</div>
-                  {zonesError}
-                </div>
-              )}
-
-              {currentZoneData ? (
-                <>
-                  <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '4px' }}>
-                    {ZONE_LABELS[activeZone] || activeZone}
-                  </h2>
-                  <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '18px' }}>
-                    Latest reading from this zone's sensor feed
-                  </p>
-
-                  <div className="metrics-row">
-                    <div
-                      className={`metric-box ${currentZoneData.is_excursion ? 'warning' : ''}`}
-                    >
-                      <div className="metric-label">Temperature</div>
-                      <div className="metric-value">
-                        {currentZoneData.last_reading.temperature_celsius}{' '}
-                        <span className="metric-unit">°C</span>
-                      </div>
-                      <div className="metric-subtext">
-                        <span className={`state-badge state-${currentZoneData.safety_state}`}>
-                          {currentZoneData.safety_state}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="metric-box">
-                      <div className="metric-label">Relative Humidity</div>
-                      <div className="metric-value">
-                        {currentZoneData.last_reading.humidity_percent}{' '}
-                        <span className="metric-unit">%</span>
-                      </div>
-                      <div className="metric-subtext">Not evaluated — no threshold retrieved</div>
-                    </div>
-                  </div>
-
-                  {currentZoneData.checks.map((check, idx) => (
-                    <div
-                      className={`provenance-box ${check.state === 'WARNING' ? 'is-warning' : ''}`}
-                      key={idx}
-                    >
-                      <div className="provenance-title">
-                        {check.chemical_name} — {check.metric_name}{' '}
-                        <span className={`state-badge state-${check.state}`}>{check.state}</span>
-                      </div>
-                      {check.reasoning}
-                    </div>
-                  ))}
-                </>
-              ) : (
-                <p className="loading-state">
-                  <span className="loading-spinner"></span>
-                  Loading zone data…
-                </p>
-              )}
-            </div>
-
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '16px' }}>
-                Chemicals Stored in This Zone
-              </div>
-              <div className="inventory-list">
-                {(currentZoneData?.chemicals || []).map((chem, idx) => (
-                  <div key={idx} className="inventory-item">
-                    <span className="chem-tag">{chem}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="side-content">
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '10px' }}>
-                Send a Test Reading
-              </div>
-              <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-                Submits a live reading to this zone and shows the resulting safety
-                evaluation, retrieved and cited in real time.
-              </p>
-              <button
-                className="action-btn btn-warning"
-                style={{ width: '100%', marginBottom: '10px' }}
-                onClick={() => handleSendReading(demoTemps.excursion)}
-                disabled={isViewer || telemetryLoading}
-              >
-                Send Excursion Reading ({demoTemps.excursion} °C)
-              </button>
-              <button
-                className="action-btn btn-secondary"
-                style={{ width: '100%' }}
-                onClick={() => handleSendReading(demoTemps.safe)}
-                disabled={isViewer || telemetryLoading}
-              >
-                Send Normal Reading ({demoTemps.safe} °C)
-              </button>
-              {isViewer && (
-                <p className="help-text">
-                  Viewer role is read-only; sign in as analyst or admin to submit telemetry.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 2: SDS Retrieval & Reconciliation View */}
-      {activeTab === 'reconciliation' && (
-        <div className="dashboard-grid">
-          <div className="main-content">
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '4px' }}>
-                Search Retrieved Safety Data
-              </div>
-              <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-                Look up a chemical to see its retrieved thresholds, citations, and any
-                conflicts between supplier documents.
-              </p>
-              <form onSubmit={handleSearch} style={{ display: 'flex', gap: '12px' }}>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="Enter chemical name (e.g. Ethanol, Sodium hydroxide)..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  disabled={isViewer}
-                />
-                <button type="submit" className="action-btn" disabled={isViewer || queryLoading}>
-                  {queryLoading ? 'Searching…' : 'Search'}
-                </button>
-              </form>
-              {isViewer && (
-                <p className="help-text">
-                  Viewer role cannot query — sign in as analyst or admin.
-                </p>
-              )}
-            </div>
-
-            {queryError && (
-              <div className="card">
-                <div className="provenance-box is-error">
-                  <div className="provenance-title">Query failed</div>
-                  {queryError}
-                </div>
-              </div>
-            )}
-
-            {queryResult && (
-              <div className="card">
-                <div className="card-header">
-                  <div className="card-title">
-                    Results for{' '}
-                    <span style={{ color: 'var(--accent)' }}>
-                      {queryResult.query.chemical_name}
-                    </span>
-                  </div>
-                  <span className={`state-badge state-${queryResult.evidence.final_safety_state}`}>
-                    {queryResult.evidence.final_safety_state}
-                  </span>
-                </div>
-
-                <h4 style={{ marginBottom: '12px', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)' }}>
-                  Retrieved thresholds
-                </h4>
-                {queryResult.evidence.thresholds.length === 0 && (
-                  <p style={{ color: 'var(--text-dim)', fontSize: '13px', marginBottom: '4px' }}>
-                    No thresholds resolved for this chemical name in the current corpus.
-                  </p>
+                {alertsError && (
+                  <Notice tone="error" icon={TriangleAlert} title="Couldn't load alerts">
+                    {alertsError}
+                  </Notice>
                 )}
-                {queryResult.evidence.thresholds.map((t, idx) => (
-                  <div key={idx} className="inventory-item" style={{ marginBottom: '8px' }}>
-                    <div>
-                      <strong>{t.parameter}</strong>:{' '}
-                      <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>
-                        {t.value} {t.unit}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-                      Citation: {t.version}
-                    </div>
-                  </div>
-                ))}
 
-                {queryResult.evidence.conflicts.map((conflict, idx) => (
-                  <div key={idx} className="provenance-box is-warning">
-                    <div className="provenance-title">Supplier conflict detected</div>
-                    {conflict}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+                <div className="card card-flush">
+                  {!alertsLoaded && !alertsError && <Loading label="Loading alerts…" />}
+                  {alertsLoaded && filteredAlerts.length === 0 && !alertsError && (
+                    <EmptyState title="Nothing here" icon={ShieldCheck}>
+                      No {alertFilter === 'all' ? '' : ALERT_FILTERS.find((f) => f.id === alertFilter).label.toLowerCase()}{' '}
+                      alerts.
+                    </EmptyState>
+                  )}
 
-          <div className="side-content">
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '12px' }}>
-                How This Works
-              </div>
-              <ul
-                style={{
-                  fontSize: '13px',
-                  color: 'var(--text-muted)',
-                  lineHeight: '1.8',
-                  paddingLeft: '16px',
-                }}
-              >
-                <li><strong>Inverted index:</strong> positional word mapping (Lab 03)</li>
-                <li><strong>Tolerant matching:</strong> k-grams + Levenshtein (Lab 04)</li>
-                <li><strong>Ranking:</strong> TF-IDF cosine similarity (Lab 05)</li>
-                <li><strong>Reconciliation:</strong> Jaccard conflict filter (Lab 06A)</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 3: Supervisor Sign-Off Dashboard */}
-      {activeTab === 'supervisor' && (
-        <div className="card">
-          <div className="card-header">
-            <div className="card-title">Alert Review &amp; Sign-Off</div>
-            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-              Every WARNING alert requires admin sign-off before it's final
-            </span>
-          </div>
-
-          {alertsError && (
-            <div className="provenance-box is-error">
-              <div className="provenance-title">Failed to load alerts</div>
-              {alertsError}
-            </div>
-          )}
-
-          <div className="inventory-list">
-            {!alertsLoaded && !alertsError && (
-              <p className="loading-state">
-                <span className="loading-spinner"></span>
-                Loading alerts…
-              </p>
-            )}
-            {alertsLoaded && alerts.length === 0 && !alertsError && (
-              <p className="empty-state">No alerts recorded yet.</p>
-            )}
-            {alerts.map((alert) => (
-              <div
-                key={alert.alert_id}
-                className="card"
-                style={{ background: 'var(--bg-subtle)', marginBottom: '16px' }}
-              >
-                <div className="card-header">
-                  <div>
-                    <span className="role-tag" style={{ marginRight: '10px' }}>
-                      {alert.alert_id}
-                    </span>
-                    <strong style={{ fontSize: '15px' }}>
-                      {alert.chemical_name} excursion in {alert.zone_id}
-                    </strong>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: '12.5px',
-                      fontWeight: 600,
-                      color:
-                        alert.status === 'approved'
-                          ? 'var(--green-safe)'
-                          : alert.status === 'rejected'
-                          ? 'var(--red-danger)'
-                          : 'var(--amber-warning)',
-                    }}
-                  >
-                    {alert.status.replace('_', ' ').toUpperCase()}
-                  </span>
-                </div>
-
-                <div className="metrics-row" style={{ marginTop: '4px' }}>
-                  <div className="metric-box warning">
-                    <div className="metric-label">Observed Value</div>
-                    <div className="metric-value" style={{ fontSize: '22px' }}>
-                      {alert.current_value} {alert.unit}
-                    </div>
-                  </div>
-                  <div className="metric-box">
-                    <div className="metric-label">Retrieved Threshold</div>
-                    <div className="metric-value" style={{ fontSize: '22px' }}>
-                      {alert.threshold_value != null ? `${alert.threshold_value} ${alert.unit}` : '—'}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="provenance-box is-warning">
-                  <div className="provenance-title">Reasoning</div>
-                  {alert.reasoning}
-                </div>
-
-                {alert.status === 'pending_review' ? (
-                  isAdmin ? (
-                    <div
-                      style={{
-                        marginTop: '16px',
-                        display: 'flex',
-                        gap: '12px',
-                        alignItems: 'center',
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="Add sign-off notes..."
-                        value={signOffNote}
-                        onChange={(e) => setSignOffNote(e.target.value)}
-                        style={{ flex: 1, minWidth: '160px' }}
-                      />
-                      <button className="action-btn" onClick={() => handleSignOff(alert.alert_id, true)}>
-                        Approve
-                      </button>
-                      <button
-                        className="action-btn btn-danger"
-                        onClick={() => handleSignOff(alert.alert_id, false)}
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="help-text">Awaiting admin sign-off.</p>
-                  )
-                ) : (
-                  <div style={{ marginTop: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
-                    <strong>Sign-off notes:</strong> {alert.notes} (by {alert.signed_by})
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Tab 4: User Management (ADMIN only) */}
-      {activeTab === 'users' && isAdmin && (
-        <div className="dashboard-grid">
-          <div className="main-content">
-            <div className="card">
-              <div className="card-header">
-                <div className="card-title">User Accounts Directory</div>
-                <button
-                  className="demo-chip"
-                  onClick={() => refreshUsers(token)}
-                >
-                  Refresh Directory
-                </button>
-              </div>
-
-              {usersError && (
-                <div className="provenance-box is-error">
-                  <div className="provenance-title">Error loading users</div>
-                  {usersError}
-                </div>
-              )}
-
-              <div className="inventory-list" style={{ marginTop: '16px' }}>
-                {!usersLoaded && !usersError && (
-                  <p className="loading-state">
-                    <span className="loading-spinner"></span>
-                    Loading users…
-                  </p>
-                )}
-                {usersLoaded && users.length === 0 && !usersError && (
-                  <p className="empty-state">No DB-backed user accounts registered yet. Demo accounts (viewer_user, analyst_user, admin_user) are active via fallback.</p>
-                )}
-                {users.map((u) => (
-                  <div key={u.user_id} className="inventory-item">
-                    <div>
-                      <strong style={{ fontSize: '15px', color: 'var(--text-main)' }}>
-                        {u.username}
-                      </strong>
-                      <span className="role-tag" style={{ marginLeft: '10px' }}>
-                        {u.role.toUpperCase()}
-                      </span>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                        ID: {u.user_id} • Created: {new Date(u.created_at).toLocaleDateString()}
-                      </div>
-                    </div>
-                    <span
-                      style={{
-                        padding: '3px 8px',
-                        borderRadius: '4px',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        backgroundColor: u.is_active ? 'var(--green-tint)' : 'var(--red-tint)',
-                        color: u.is_active ? 'var(--green-safe)' : 'var(--red-danger)',
-                        border: `1px solid ${u.is_active ? 'var(--green-border)' : 'var(--red-border)'}`,
-                      }}
-                    >
-                      {u.is_active ? 'ACTIVE' : 'INACTIVE'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="side-content">
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '16px' }}>
-                Register New User
-              </div>
-
-              <form onSubmit={handleCreateUser} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Username
-                  </label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="e.g. jsmith"
-                    value={newUsername}
-                    onChange={(e) => setNewUsername(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    className="input-field"
-                    placeholder="••••••••"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Role Assignment
-                  </label>
-                  <select
-                    className="input-field"
-                    value={newUserRole}
-                    onChange={(e) => setNewUserRole(e.target.value)}
-                  >
-                    <option value="viewer">Viewer (Read-only)</option>
-                    <option value="analyst">Analyst (Telemetry &amp; Queries)</option>
-                    <option value="admin">Admin (Full Control &amp; Sign-offs)</option>
-                  </select>
-                </div>
-
-                <button type="submit" className="action-btn" style={{ marginTop: '8px' }}>
-                  Create Account
-                </button>
-              </form>
-
-              {userCreateSuccess && (
-                <div className="provenance-box" style={{ marginTop: '16px', borderColor: 'var(--green-border)', background: 'var(--green-tint)', color: 'var(--green-safe)' }}>
-                  <div className="provenance-title">Success</div>
-                  {userCreateSuccess}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 5: Zone Inventory Management (ADMIN only) */}
-      {activeTab === 'zones' && isAdmin && (
-        <div className="dashboard-grid">
-          <div className="main-content">
-            <div className="card">
-              <div className="card-header">
-                <div className="card-title">Zone Chemical Inventories</div>
-                <button className="demo-chip" onClick={() => refreshZones(token)}>
-                  Refresh Zones
-                </button>
-              </div>
-
-              {zoneManageSuccess && (
-                <div className="provenance-box" style={{ marginBottom: '16px', borderColor: 'var(--green-border)', background: 'var(--green-tint)', color: 'var(--green-safe)' }}>
-                  <div className="provenance-title">Success</div>
-                  {zoneManageSuccess}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-                {Object.entries(zones).map(([zId, zData]) => (
-                  <div key={zId} className="card" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-color)' }}>
-                    <div className="card-header">
-                      <div>
-                        <strong style={{ fontSize: '15px', color: 'var(--text-main)' }}>
-                          {zId}
-                        </strong>
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '8px' }}>
-                          ({(zData.chemicals || []).length} chemicals)
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="inventory-list" style={{ marginTop: '10px' }}>
-                      {(zData.chemicals || []).map((chem) => (
-                        <div key={chem} className="inventory-item">
-                          <span style={{ fontWeight: 500 }}>{chem}</span>
+                  <ul className="alert-list">
+                    {visibleAlerts.map((alert) => {
+                      const isOpen = expandedAlertId === alert.alert_id;
+                      const source = citationLabel(citationFromReasoning(alert.reasoning));
+                      return (
+                        <li key={alert.alert_id} className={`alert-item${isOpen ? ' is-open' : ''}`}>
                           <button
-                            className="logout-btn"
-                            style={{ color: 'var(--red-danger)', borderColor: 'var(--red-border)' }}
-                            onClick={() => handleRemoveChemical(zId, chem)}
+                            className="alert-row"
+                            onClick={() => {
+                              setExpandedAlertId(isOpen ? null : alert.alert_id);
+                              setSignOffNote('');
+                            }}
+                            aria-expanded={isOpen}
                           >
-                            Remove
+                            <span className={`alert-icon status-${alert.status}`}>
+                              <TriangleAlert size={15} />
+                            </span>
+                            <span className="alert-main">
+                              <span className="alert-title">{alert.chemical_name}</span>
+                              <span className="alert-meta">
+                                {zoneName(alert.zone_id)} · {alert.alert_id} · {timeAgo(alert.created_at, nowTick)}
+                              </span>
+                            </span>
+                            <span className="alert-values">
+                              <span className="alert-observed">{formatValue(alert.current_value, alert.unit)}</span>
+                              <span className="alert-limit">limit {formatValue(alert.threshold_value, alert.unit)}</span>
+                            </span>
+                            <span className={`status-pill status-${alert.status}`}>
+                              {alert.status === 'pending_review' ? 'Pending' : alert.status}
+                            </span>
+                            <ChevronDown size={16} className={`chevron${isOpen ? ' rotate-180' : ''}`} />
                           </button>
-                        </div>
-                      ))}
+
+                          <AnimatePresence initial={false}>
+                            {isOpen && (
+                              <motion.div
+                                className="alert-detail"
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                transition={{ duration: 0.2 }}
+                              >
+                                <div className="alert-detail-inner">
+                                  <dl className="detail-grid">
+                                    <div>
+                                      <dt>Raised by</dt>
+                                      <dd>{alert.created_by || '—'}</dd>
+                                    </div>
+                                    <div>
+                                      <dt>Raised at</dt>
+                                      <dd>{formatDateTime(alert.created_at)}</dd>
+                                    </div>
+                                    <div>
+                                      <dt>Source</dt>
+                                      <dd>{source || '—'}</dd>
+                                    </div>
+                                  </dl>
+                                  <div className="eval-log">
+                                    <div className="eval-log-line">
+                                      <span>{alert.reasoning}</span>
+                                    </div>
+                                  </div>
+
+                                  {alert.status === 'pending_review' ? (
+                                    isAdmin ? (
+                                      <div className="signoff-bar">
+                                        <input
+                                          type="text"
+                                          className="input-field"
+                                          placeholder="Sign-off note (optional)"
+                                          value={signOffNote}
+                                          onChange={(e) => setSignOffNote(e.target.value)}
+                                        />
+                                        <button className="action-btn" onClick={() => handleSignOff(alert.alert_id, true)}>
+                                          Approve
+                                        </button>
+                                        <button
+                                          className="action-btn btn-danger"
+                                          onClick={() => handleSignOff(alert.alert_id, false)}
+                                        >
+                                          Reject
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <p className="help-text">Awaiting admin sign-off.</p>
+                                    )
+                                  ) : (
+                                    <p className="signoff-record">
+                                      <strong>
+                                        {alert.status === 'approved' ? 'Approved' : 'Rejected'} by {alert.signed_by}
+                                      </strong>
+                                      {alert.signed_at && <> · {formatDateTime(alert.signed_at)}</>}
+                                      {alert.notes && <> — “{alert.notes}”</>}
+                                    </p>
+                                  )}
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  {filteredAlerts.length > 0 && (
+                    <div className="list-footer">
+                      <span>
+                        Showing {visibleAlerts.length} of {filteredAlerts.length}
+                      </span>
+                      {visibleAlerts.length < filteredAlerts.length && (
+                        <button
+                          className="action-btn btn-secondary btn-sm"
+                          onClick={() => setAlertLimit((n) => n + ALERT_PAGE_SIZE)}
+                        >
+                          Show more
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="side-content" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '12px' }}>
-                Add Chemical to Zone
-              </div>
-
-              <form onSubmit={handleAddChemical} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Target Zone
-                  </label>
-                  <select
-                    className="input-field"
-                    value={selectedZoneForChem}
-                    onChange={(e) => setSelectedZoneForChem(e.target.value)}
-                  >
-                    {Object.keys(zones).map((zId) => (
-                      <option key={zId} value={zId}>
-                        {zId}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Chemical Name
-                  </label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="e.g. Isopropanol"
-                    value={addChemName}
-                    onChange={(e) => setAddChemName(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <button type="submit" className="action-btn">
-                  Add to Inventory
-                </button>
-              </form>
-            </div>
-
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '12px' }}>
-                Create Monitored Zone
-              </div>
-
-              <form onSubmit={handleCreateZone} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Zone ID
-                  </label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="e.g. Zone_D"
-                    value={newZoneId}
-                    onChange={(e) => setNewZoneId(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Initial Chemicals (Comma-separated)
-                  </label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="e.g. Acetone, Methanol"
-                    value={newZoneChems}
-                    onChange={(e) => setNewZoneChems(e.target.value)}
-                  />
-                </div>
-
-                <button type="submit" className="action-btn">
-                  Create Zone
-                </button>
-              </form>
-            </div>
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '12px' }}>
-                Upload New SDS Document
-              </div>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                Upload an SDS PDF to extract safety thresholds &amp; index into corpus dynamically.
-              </p>
-
-              <form onSubmit={handleUploadSds} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Select SDS PDF
-                  </label>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    className="input-field"
-                    onChange={(e) => setUploadFile(e.target.files[0] || null)}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Chemical Name (Optional override)
-                  </label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="Auto-detected if blank"
-                    value={uploadChemName}
-                    onChange={(e) => setUploadChemName(e.target.value)}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
-                    Supplier (Optional override)
-                  </label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="Auto-detected if blank"
-                    value={uploadSupplier}
-                    onChange={(e) => setUploadSupplier(e.target.value)}
-                  />
-                </div>
-
-                <button type="submit" className="action-btn" disabled={uploadLoading}>
-                  {uploadLoading ? 'Uploading & Indexing…' : 'Upload SDS PDF'}
-                </button>
-              </form>
-
-              {uploadSuccess && (
-                <div className="provenance-box" style={{ marginTop: '12px', borderColor: 'var(--green-border)', background: 'var(--green-tint)', color: 'var(--green-safe)' }}>
-                  <div className="provenance-title">Success</div>
-                  {uploadSuccess}
-                </div>
-              )}
-
-              {uploadError && (
-                <div className="provenance-box is-error" style={{ marginTop: '12px' }}>
-                  <div className="provenance-title">Upload Failed</div>
-                  {uploadError}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 6: Compliance Audit Trail (ADMIN only) */}
-      {activeTab === 'audit' && isAdmin && (
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <div className="card-title">System Audit Trail</div>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                Security log of system actions and sign-offs (Total entries: {auditTotal}).
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                className="demo-chip"
-                disabled={auditOffset === 0}
-                onClick={() => refreshAuditLogs(token, Math.max(0, auditOffset - 25))}
-              >
-                Previous
-              </button>
-              <button
-                className="demo-chip"
-                disabled={auditOffset + 25 >= auditTotal}
-                onClick={() => refreshAuditLogs(token, auditOffset + 25)}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-
-          {auditError && (
-            <div className="provenance-box is-error">
-              <div className="provenance-title">Failed to load audit logs</div>
-              {auditError}
-            </div>
-          )}
-
-          <div className="inventory-list" style={{ marginTop: '16px' }}>
-            {!auditLoaded && !auditError && (
-              <p className="loading-state">
-                <span className="loading-spinner"></span>
-                Loading audit log…
-              </p>
-            )}
-            {auditLoaded && auditLogs.length === 0 && !auditError && (
-              <p className="empty-state">No audit log entries recorded yet.</p>
-            )}
-            {auditLogs.map((log) => (
-              <div key={log.id} className="inventory-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className="role-tag" style={{ fontSize: '11px' }}>
-                      #{log.id}
-                    </span>
-                    <strong style={{ fontSize: '14px', color: 'var(--text-main)' }}>
-                      {log.action}
-                    </strong>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      by {log.user_id}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-                    {new Date(log.timestamp).toLocaleString()}
-                  </span>
-                </div>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  <strong>Resource:</strong> {log.resource || 'N/A'}
-                  {log.details && (
-                    <span style={{ marginLeft: '12px' }}>
-                      <strong>Details:</strong> {typeof log.details === 'object' ? JSON.stringify(log.details) : log.details}
-                    </span>
                   )}
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+              </>
+            )}
+
+            {activeTab === 'users' && isAdmin && (
+              <>
+                <PageHeader
+                  title="Users"
+                  subtitle="Accounts and their access level."
+                  actions={
+                    <button className="action-btn btn-secondary btn-sm" onClick={() => refreshUsers(token)}>
+                      <RefreshCw size={14} /> Refresh
+                    </button>
+                  }
+                />
+                {usersError && (
+                  <Notice tone="error" icon={TriangleAlert} title="Couldn't load users">
+                    {usersError}
+                  </Notice>
+                )}
+                <div className="dashboard-grid">
+                  <div className="main-col">
+                    <div className="card card-flush">
+                      {!usersLoaded && !usersError && <Loading label="Loading users…" />}
+                      {usersLoaded && users.length === 0 && !usersError && (
+                        <EmptyState title="No accounts yet" icon={Users}>
+                          Built-in demo accounts remain available until you add your own.
+                        </EmptyState>
+                      )}
+                      {users.length > 0 && (
+                        <div className="table-wrap">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>User</th>
+                                <th>Role</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {users.map((u) => (
+                                <tr key={u.user_id}>
+                                  <td>
+                                    <span className="user-cell">
+                                      <span className="avatar avatar-sm">{u.username.charAt(0).toUpperCase()}</span>
+                                      <span>
+                                        <span className="cell-strong">{u.username}</span>
+                                        <span className="cell-sub">{u.user_id}</span>
+                                      </span>
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <span className="role-tag">{ROLE_LABELS[u.role] || u.role}</span>
+                                  </td>
+                                  <td>
+                                    <span className={`status-pill ${u.is_active ? 'status-approved' : 'status-rejected'}`}>
+                                      {u.is_active ? 'Active' : 'Inactive'}
+                                    </span>
+                                  </td>
+                                  <td className="muted">{u.created_at ? formatDateTime(u.created_at) : '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="side-col">
+                    <div className="card">
+                      <h3 className="card-heading">Add user</h3>
+                      <form onSubmit={handleCreateUser} className="form-stack">
+                        <Field label="Username">
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="jsmith"
+                            value={newUsername}
+                            onChange={(e) => setNewUsername(e.target.value)}
+                            required
+                          />
+                        </Field>
+                        <Field label="Password">
+                          <input
+                            type="password"
+                            className="input-field"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            required
+                          />
+                        </Field>
+                        <Field label="Role">
+                          <select
+                            className="input-field"
+                            value={newUserRole}
+                            onChange={(e) => setNewUserRole(e.target.value)}
+                          >
+                            <option value="viewer">Viewer — read only</option>
+                            <option value="analyst">Analyst — readings and search</option>
+                            <option value="admin">Admin — full access</option>
+                          </select>
+                        </Field>
+                        <button type="submit" className="action-btn btn-block">
+                          <Plus size={15} /> Create account
+                        </button>
+                      </form>
+                      {userCreateSuccess && (
+                        <Notice tone="success" icon={ShieldCheck}>
+                          {userCreateSuccess}
+                        </Notice>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {activeTab === 'zones' && isAdmin && (
+              <>
+                <PageHeader
+                  title="Zones & documents"
+                  subtitle="Manage zone inventories and add SDS documents to the corpus."
+                  actions={
+                    <button className="action-btn btn-secondary btn-sm" onClick={() => refreshZones(token)}>
+                      <RefreshCw size={14} /> Refresh
+                    </button>
+                  }
+                />
+                {zonesError && (
+                  <Notice tone="error" icon={TriangleAlert} title="Something went wrong">
+                    {zonesError}
+                  </Notice>
+                )}
+                {zoneManageSuccess && (
+                  <Notice tone="success" icon={ShieldCheck}>
+                    {zoneManageSuccess}
+                  </Notice>
+                )}
+                <div className="dashboard-grid">
+                  <div className="main-col">
+                    {Object.entries(zones).map(([zId, zData]) => (
+                      <div key={zId} className="card">
+                        <div className="card-head">
+                          <div>
+                            <div className="eyebrow">{zoneName(zId)}</div>
+                            <h3 className="card-heading">{ZONE_LABELS[zId] || 'Custom zone'}</h3>
+                          </div>
+                          <span className="muted">
+                            {(zData.chemicals || []).length} chemical{(zData.chemicals || []).length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+                        <div className="chip-list">
+                          {(zData.chemicals || []).length === 0 && <span className="muted">No chemicals assigned.</span>}
+                          {(zData.chemicals || []).map((chem) => (
+                            <span key={chem} className="chip">
+                              {chem}
+                              <button
+                                className="chip-remove"
+                                onClick={() => handleRemoveChemical(zId, chem)}
+                                aria-label={`Remove ${chem} from ${zoneName(zId)}`}
+                                title="Remove"
+                              >
+                                <X size={13} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="side-col">
+                    <div className="card">
+                      <h3 className="card-heading">Add chemical</h3>
+                      <form onSubmit={handleAddChemical} className="form-stack">
+                        <Field label="Zone">
+                          <select
+                            className="input-field"
+                            value={selectedZoneForChem}
+                            onChange={(e) => setSelectedZoneForChem(e.target.value)}
+                          >
+                            {Object.keys(zones).map((zId) => (
+                              <option key={zId} value={zId}>
+                                {zoneName(zId)}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                        <Field label="Chemical name">
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="Isopropanol"
+                            value={addChemName}
+                            onChange={(e) => setAddChemName(e.target.value)}
+                            required
+                          />
+                        </Field>
+                        <button type="submit" className="action-btn btn-block">
+                          <Plus size={15} /> Add to zone
+                        </button>
+                      </form>
+                    </div>
+
+                    <div className="card">
+                      <h3 className="card-heading">New zone</h3>
+                      <form onSubmit={handleCreateZone} className="form-stack">
+                        <Field label="Zone ID">
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="Zone_D"
+                            value={newZoneId}
+                            onChange={(e) => setNewZoneId(e.target.value)}
+                            required
+                          />
+                        </Field>
+                        <Field label="Chemicals" hint="Comma-separated, optional">
+                          <input
+                            type="text"
+                            className="input-field"
+                            placeholder="Acetone, Methanol"
+                            value={newZoneChems}
+                            onChange={(e) => setNewZoneChems(e.target.value)}
+                          />
+                        </Field>
+                        <button type="submit" className="action-btn btn-secondary btn-block">
+                          Create zone
+                        </button>
+                      </form>
+                    </div>
+
+                    <div className="card">
+                      <h3 className="card-heading">Upload SDS</h3>
+                      <p className="card-sub">Limits are extracted and indexed on upload.</p>
+                      <form onSubmit={handleUploadSds} className="form-stack">
+                        <label className={`dropzone${uploadFile ? ' has-file' : ''}`}>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".pdf,application/pdf"
+                            onChange={(e) => setUploadFile(e.target.files[0] || null)}
+                            required
+                          />
+                          <Upload size={18} aria-hidden="true" />
+                          <span className="dropzone-title">{uploadFile ? uploadFile.name : 'Choose a PDF'}</span>
+                          <span className="dropzone-hint">
+                            {uploadFile ? `${(uploadFile.size / 1024).toFixed(0)} KB` : 'Safety Data Sheet, .pdf'}
+                          </span>
+                        </label>
+                        <Field label="Chemical name" hint="Optional — detected from the document">
+                          <input
+                            type="text"
+                            className="input-field"
+                            value={uploadChemName}
+                            onChange={(e) => setUploadChemName(e.target.value)}
+                          />
+                        </Field>
+                        <Field label="Supplier" hint="Optional — detected from the document">
+                          <input
+                            type="text"
+                            className="input-field"
+                            value={uploadSupplier}
+                            onChange={(e) => setUploadSupplier(e.target.value)}
+                          />
+                        </Field>
+                        <button type="submit" className="action-btn btn-block" disabled={uploadLoading || !uploadFile}>
+                          {uploadLoading ? (
+                            <>
+                              <LoaderCircle size={15} className="spin" /> Indexing
+                            </>
+                          ) : (
+                            <>
+                              <Upload size={15} /> Upload
+                            </>
+                          )}
+                        </button>
+                      </form>
+                      {uploadSuccess && (
+                        <Notice tone="success" icon={ShieldCheck}>
+                          {uploadSuccess}
+                        </Notice>
+                      )}
+                      {uploadError && (
+                        <Notice tone="error" icon={TriangleAlert} title="Upload failed">
+                          {uploadError}
+                        </Notice>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {activeTab === 'audit' && isAdmin && (
+              <>
+                <PageHeader
+                  title="Audit trail"
+                  subtitle="Every system action and sign-off, newest first."
+                  actions={
+                    <div className="pager">
+                      <span className="muted">
+                        {auditTotal === 0
+                          ? '0'
+                          : `${auditOffset + 1}–${Math.min(auditOffset + AUDIT_PAGE_SIZE, auditTotal)}`}{' '}
+                        of {auditTotal}
+                      </span>
+                      <button
+                        className="icon-btn icon-btn-bordered"
+                        disabled={auditOffset === 0}
+                        onClick={() => refreshAuditLogs(token, Math.max(0, auditOffset - AUDIT_PAGE_SIZE))}
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <button
+                        className="icon-btn icon-btn-bordered"
+                        disabled={auditOffset + AUDIT_PAGE_SIZE >= auditTotal}
+                        onClick={() => refreshAuditLogs(token, auditOffset + AUDIT_PAGE_SIZE)}
+                        aria-label="Next page"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  }
+                />
+                {auditError && (
+                  <Notice tone="error" icon={TriangleAlert} title="Couldn't load the audit trail">
+                    {auditError}
+                  </Notice>
+                )}
+                <div className="card card-flush">
+                  {!auditLoaded && !auditError && <Loading label="Loading audit trail…" />}
+                  {auditLoaded && auditLogs.length === 0 && !auditError && (
+                    <EmptyState title="No entries yet" icon={ScrollText} />
+                  )}
+                  {auditLogs.length > 0 && (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>User</th>
+                            <th>Resource</th>
+                            <th>Details</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {auditLogs.map((log) => (
+                            <tr key={log.id}>
+                              <td className="muted nowrap">{formatDateTime(log.timestamp)}</td>
+                              <td>
+                                <span className="action-tag">{humanizeAction(log.action)}</span>
+                              </td>
+                              <td className="nowrap">{log.user_id}</td>
+                              <td className="mono">{log.resource || '—'}</td>
+                              <td>
+                                <div className="cell-details">
+                                  {log.details && typeof log.details === 'object'
+                                    ? Object.entries(log.details).map(([k, v]) => (
+                                        <span key={k} className="kv">
+                                          {DETAIL_LABELS[k] !== '' && (
+                                            <span className="kv-key">{DETAIL_LABELS[k] || humanizeMetric(k)}</span>
+                                          )}
+                                          {formatDetailValue(k, v)}
+                                        </span>
+                                      ))
+                                    : log.details}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </motion.div>
+        </main>
+      </div>
+    </MotionConfig>
   );
 }
 
 export default App;
-
