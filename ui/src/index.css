@@ -310,6 +310,12 @@ h3 {
 .input-field::placeholder {
   color: var(--dim);
 }
+/* Edge draws its own reveal/clear buttons inside password and text inputs;
+   the login form has its own show/hide toggle, so they overlapped. */
+.input-field::-ms-reveal,
+.input-field::-ms-clear {
+  display: none;
+}
 .input-field:focus {
   outline: none;
   border-color: var(--teal);
