@@ -5,7 +5,7 @@ import './index.css';
 import { getHealth, getMe, listAlerts, listZones, login as apiLogin, onUnauthorized, submitZoneTelemetry } from './api';
 import LoginScreen from './components/LoginScreen';
 import MoleculeField from './components/MoleculeField';
-import { useNow } from './components/motion';
+import { useNow } from './components/hooks';
 import { ROLE_LABELS, zoneName } from './constants';
 import { clearSession, loadTab, loadToken, saveTab, saveToken } from './session';
 import { AuditView, UsersView, ZonesView } from './views/AdminViews';

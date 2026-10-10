@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { FileText, GitMerge, LoaderCircle, Search, TriangleAlert } from 'lucide-react';
 import { queryChemical } from '../api';
 import ProcessPipeline from '../components/ProcessPipeline';
-import { rise, stagger } from '../components/motion';
+import { rise, stagger } from '../components/motionVariants';
 import { EmptyState, Notice, PageHeader, SourceCell, StateBadge } from '../components/ui';
 import { formatValue, humanizeMetric } from '../format';
 

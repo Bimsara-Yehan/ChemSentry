@@ -178,10 +178,10 @@ export async function getHealth() {
   return res.data;
 }
 
-export async function getAuditLog(token, limit = 50, offset = 0, action = '') {
+export async function getAuditLog(token, limit = 50, offset = 0) {
   try {
     const res = await client.get('/audit-log', {
-      params: action ? { limit, offset, action } : { limit, offset },
+      params: { limit, offset },
       headers: authHeader(token),
     });
     return res.data;

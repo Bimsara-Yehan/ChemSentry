@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { animate, motion, useReducedMotion } from 'motion/react';
 
-// Small motion primitives shared across views.
+// Small animated components shared across views. Non-component exports
+// live in motionVariants.js and hooks.js so Vite fast refresh keeps working.
 
 // Counts from the previous value to the new one, so a live reading visibly
 // "moves" when a sensor update arrives rather than snapping.
@@ -36,17 +37,6 @@ export function AnimatedNumber({ value, decimals = 1, className = '' }) {
   );
 }
 
-// Staggered entrance for lists and grids.
-export const stagger = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.06, delayChildren: 0.05 } },
-};
-
-export const rise = {
-  hidden: { opacity: 0, y: 14 },
-  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 260, damping: 26 } },
-};
-
 // Circular dial (humidity, completion). Arc length animates with a spring.
 export function RingGauge({ value, max = 100, size = 112, stroke = 9, tone = 'cyan', label, unit = '%' }) {
   const r = (size - stroke) / 2;
@@ -79,15 +69,4 @@ export function RingGauge({ value, max = 100, size = 112, stroke = 9, tone = 'cy
       </div>
     </div>
   );
-}
-
-// Ticks once per second; used for "updated Xs ago" text.
-export function useNow(active = true) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return undefined;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [active]);
-  return now;
 }

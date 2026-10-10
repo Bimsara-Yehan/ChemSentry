@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Network } from 'lucide-react';
 import { getCoStorageCheck } from '../api';
-import { rise, stagger } from './motion';
+import { rise, stagger } from './motionVariants';
 
 // Agent B co-storage analysis for one zone (M3). Apriori only finds which
 // chemicals are stored together; whether a pair is a reactivity concern comes
@@ -10,23 +10,30 @@ import { rise, stagger } from './motion';
 // (agents/agent_b_analysis/apriori_discovery.py). The panel shows both,
 // labelled as such, and never presents a mined pattern as a verdict.
 
-// The label is the backend's own status prefix ("VIOLENT REACTION",
-// "COMPATIBLE", ...), shown as-is; only its colour is chosen here.
+// Colour for the backend's status prefix ("VIOLENT REACTION", "REACTIVE",
+// "COMPATIBLE", ...). The backend answers "COMPATIBLE" for any pair that is
+// simply *not in* its lookup, so that status means "no known warning on
+// file", not "safe to store together". It is shown neutral, never green:
+// an absence of evidence must not look like a safety verdict (CLAUDE.md).
 function classify(status = '') {
   const prefix = (status.split(':')[0] || 'UNCLASSIFIED').trim();
   const s = prefix.toUpperCase();
-  let tone = 'warning';
-  if (s.startsWith('COMPATIBLE')) tone = 'safe';
-  else if (/VIOLENT|TOXIC|EXPLOSIVE/.test(s)) tone = 'danger';
-  const label = prefix.charAt(0) + prefix.slice(1).toLowerCase();
-  return { tone, label };
+  if (s.startsWith('COMPATIBLE')) return { tone: 'neutral', label: 'No known warning on file' };
+  const tone = /VIOLENT|TOXIC|EXPLOSIVE/.test(s) ? 'danger' : 'warning';
+  return { tone, label: prefix.charAt(0) + prefix.slice(1).toLowerCase() };
 }
 
-// A rule and its mirror image (A→B, B→A) describe the same pair; show it once.
-function dedupe(rules) {
+// Pairs only, each shown once (A→B and B→A are the same pair). The lookup
+// matches exact pairs, so its answer for a group of three or more says
+// nothing about the pairs inside it -- e.g. it reported "Compatible" for a
+// group containing a violent-reaction pair. Every pair of such a group is
+// already listed on its own, so larger groups are left out.
+function pairsOnly(rules) {
   const seen = new Map();
   for (const r of rules) {
-    const key = [...r.antecedents, ...r.consequents].sort().join(' + ');
+    const members = [...r.antecedents, ...r.consequents];
+    if (members.length !== 2) continue;
+    const key = [...members].sort().join(' + ');
     if (!seen.has(key) || r.confidence > seen.get(key).confidence) seen.set(key, { ...r, key });
   }
   return [...seen.values()];
@@ -48,7 +55,7 @@ export default function CoStoragePanel({ token, zoneId }) {
     };
   }, [token, zoneId]);
 
-  const pairs = data ? dedupe(data.rules) : [];
+  const pairs = data ? pairsOnly(data.rules) : [];
 
   return (
     <div className="card">
@@ -61,7 +68,8 @@ export default function CoStoragePanel({ token, zoneId }) {
       </div>
       <p className="card-sub">
         Apriori finds chemicals stored together across the site. Each pair is then checked against Agent B's
-        reactivity lookup.
+        reactivity lookup. A pair the lookup doesn't list is shown as having no known warning, which is not a
+        confirmation that it is safe.
       </p>
 
       {error && <p className="help-text">{error}</p>}
@@ -81,15 +89,7 @@ export default function CoStoragePanel({ token, zoneId }) {
                   <span className="pair-names">{p.key}</span>
                   <span className={`pair-tag pair-tag-${c.tone}`}>{c.label}</span>
                 </div>
-                {p.evidence?.length > 0 ? (
-                  <ul className="pair-evidence">
-                    {p.evidence.map((e) => (
-                      <li key={e}>{e}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  c.tone !== 'safe' && <p className="pair-detail">{detail}</p>
-                )}
+                <p className="pair-detail">{detail}</p>
                 <div className="pair-metrics">
                   <span>support {p.support.toFixed(2)}</span>
                   <span>confidence {p.confidence.toFixed(2)}</span>

@@ -5,7 +5,8 @@ import ChemTile from '../components/ChemTile';
 import CoStoragePanel from '../components/CoStoragePanel';
 import StorageLimitsTable from '../components/StorageLimitsTable';
 import VesselGauge from '../components/VesselGauge';
-import { RingGauge, stagger } from '../components/motion';
+import { RingGauge } from '../components/motion';
+import { stagger } from '../components/motionVariants';
 import { Loading, Notice, PageHeader, StateBadge } from '../components/ui';
 import { SENSOR_RANGE, zoneName, zoneSummary } from '../constants';
 import { formatUnit, formatValue, humanizeMetric, unitForCheck } from '../format';
@@ -265,10 +266,9 @@ export default function LiveView({
                 <span className="muted small">Select a tile for its evaluation trace</span>
               </div>
               <motion.div className="chem-grid" variants={stagger} initial="hidden" animate="show">
-                {chemRows.map((r, i) => (
+                {chemRows.map((r) => (
                   <ChemTile
                     key={r.name}
-                    index={i + 1}
                     name={r.name}
                     state={r.state}
                     limitText={r.limitText}

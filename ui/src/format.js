@@ -12,7 +12,7 @@ export function humanizeMetric(metric) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-// "sds_ingested" -> "SDS ingested". Acronyms stay upper-case.
+// "alert_created" -> "Alert created"; acronyms such as SDS stay upper-case.
 const ACRONYMS = new Set(['sds', 'cas', 'id']);
 
 export function humanizeAction(action) {

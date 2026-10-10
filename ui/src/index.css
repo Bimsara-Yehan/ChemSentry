@@ -1320,7 +1320,7 @@ select.input-field option {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  min-height: 140px;
+  min-height: 118px;
   padding: 12px;
   text-align: left;
   border-radius: var(--radius-md);
@@ -1355,11 +1355,6 @@ select.input-field option {
   border-color: var(--teal);
   box-shadow: 0 0 0 1px var(--teal), 0 0 24px -6px rgba(45, 212, 191, 0.6);
 }
-.chem-tile-index {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--muted);
-}
 .chem-tile-state {
   position: absolute;
   top: 12px;
@@ -1376,20 +1371,26 @@ select.input-field option {
   background: var(--warn);
   animation: blink 1.2s infinite;
 }
-.chem-tile-symbol {
-  font-family: var(--font-display);
-  font-size: 32px;
-  font-weight: 700;
-  line-height: 1.1;
-  background: var(--reagent);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.chem-tile-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: var(--unknown-tint);
+  border: 1px solid rgba(148, 163, 200, 0.3);
+  color: var(--unknown);
 }
-.tile-WARNING .chem-tile-symbol {
-  background: linear-gradient(135deg, #fde68a, #f59e0b);
-  -webkit-background-clip: text;
-  background-clip: text;
+.tile-SAFE .chem-tile-icon {
+  background: var(--safe-tint);
+  border-color: rgba(52, 211, 153, 0.35);
+  color: var(--safe);
+}
+.tile-WARNING .chem-tile-icon {
+  background: var(--warn-tint);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: var(--warn);
 }
 .chem-tile-name {
   font-size: 12.5px;
@@ -2493,30 +2494,5 @@ select.input-field option {
 .safety-card-translation {
   padding-top: 8px;
   border-top: 1px dashed var(--line);
-  color: var(--text);
-}
-.pair-evidence {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-2);
-}
-.pair-evidence li {
-  padding-left: 10px;
-  border-left: 2px solid rgba(251, 113, 133, 0.5);
-}
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-.chip-btn.is-active {
-  border-color: var(--teal);
-  background: rgba(45, 212, 191, 0.14);
   color: var(--text);
 }

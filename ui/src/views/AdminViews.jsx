@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronLeft, ChevronRight, FileUp, LoaderCircle, Plus, RefreshCw, ScrollText, ShieldCheck, TriangleAlert, Users, X } from 'lucide-react';
 import { addChemicalToZone, createUser, createZone, getAuditLog, listUsers, removeChemicalFromZone, uploadSdsDocument } from '../api';
-import { rise, stagger } from '../components/motion';
+import { rise, stagger } from '../components/motionVariants';
 import { EmptyState, Field, Loading, Notice, PageHeader } from '../components/ui';
 import { ROLE_LABELS, zoneName, zoneSummary } from '../constants';
 import { formatDateTime, humanizeAction, humanizeMetric } from '../format';
@@ -416,15 +416,12 @@ export function AuditView({ token }) {
   const [offset, setOffset] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
-  const [actions, setActions] = useState([]);
-  const [filter, setFilter] = useState('');
 
-  const load = async (off, action = filter) => {
+  const load = async (off) => {
     try {
-      const res = await getAuditLog(token, AUDIT_PAGE, off, action);
+      const res = await getAuditLog(token, AUDIT_PAGE, off);
       setLogs(res?.entries || []);
       setTotal(res?.total || 0);
-      setActions(res?.available_actions || []);
       setOffset(off);
       setError('');
       setLoaded(true);
@@ -462,25 +459,6 @@ export function AuditView({ token }) {
         <Notice tone="error" icon={TriangleAlert} title="Couldn't load the audit trail">
           {error}
         </Notice>
-      )}
-      {actions.length > 0 && (
-        <div className="filter-row" role="radiogroup" aria-label="Filter by action">
-          {['', ...actions].map((a) => (
-            <button
-              key={a || 'all'}
-              type="button"
-              role="radio"
-              aria-checked={filter === a}
-              className={`chip-btn${filter === a ? ' is-active' : ''}`}
-              onClick={() => {
-                setFilter(a);
-                load(0, a);
-              }}
-            >
-              {a ? humanizeAction(a) : 'All actions'}
-            </button>
-          ))}
-        </div>
       )}
       <div className="card card-flush">
         {!loaded && !error && <Loading label="Loading audit trail…" />}

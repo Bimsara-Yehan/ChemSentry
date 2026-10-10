@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { ArrowRight, Eye, EyeOff, LoaderCircle, Lock, TriangleAlert, User } from 'lucide-react';
 import Flask from './Flask';
 import MoleculeField from './MoleculeField';
-import { rise, stagger } from './motion';
+import { rise, stagger } from './motionVariants';
 
 export default function LoginScreen({ onLogin, loading, error, restoring }) {
   const [username, setUsername] = useState('');
