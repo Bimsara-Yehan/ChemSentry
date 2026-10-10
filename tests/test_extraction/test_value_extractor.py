@@ -7,8 +7,13 @@ these snippets are inlined here to keep the tests runnable in CI without the
 source documents.
 """
 
+import re
+import threading
+
+from extraction import value_extractor
 from extraction.value_extractor import (
     _normalise_numeric_string,
+    _regex_findall_safe,
     extract_boiling_point,
     extract_cas_numbers,
     extract_flash_point,
@@ -204,3 +209,76 @@ def test_boiling_point_still_extracts_plain_values_correctly() -> None:
 
     assert len(results) == 1
     assert results[0].value == "56"
+
+
+# ---------------------------------------------------------------------------
+# _regex_findall_safe -- main-thread guard for the SIGALRM timeout path
+# ---------------------------------------------------------------------------
+
+
+class _FakeUnixSignal:
+    """Stand-in for the stdlib `signal` module that reports SIGALRM as
+    available regardless of host OS. The real bug this guards against
+    (signal.signal() raising ValueError off the main thread) only
+    reproduces on actual Unix inside a background thread -- e.g. CI's
+    Linux runner executing an async FastAPI endpoint via the test
+    client's event-loop thread -- so it can't be triggered on Windows by
+    platform alone. Recording calls instead of touching the real signal
+    module lets the thread-guard be verified deterministically on any OS.
+    """
+
+    SIGALRM = object()
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def signal(self, signum, handler):
+        self.calls.append(("signal", signum, handler))
+        return None
+
+    def alarm(self, seconds):
+        self.calls.append(("alarm", seconds))
+
+
+def test_regex_findall_safe_uses_alarm_path_on_main_thread(monkeypatch) -> None:
+    """On the main thread, with SIGALRM reported available, the hard-timeout
+    alarm path must actually run -- confirms the thread guard added for the
+    off-main-thread case doesn't also disable the intended Unix path."""
+    fake_signal = _FakeUnixSignal()
+    monkeypatch.setattr(value_extractor, "signal", fake_signal)
+    monkeypatch.setattr(value_extractor.sys, "platform", "linux")
+
+    results = _regex_findall_safe(re.compile(r"a+"), "aaa bbb aaa")
+
+    assert [m.group(0) for m in results] == ["aaa", "aaa"]
+    assert ("alarm", value_extractor.REGEX_TIMEOUT_SECONDS) in fake_signal.calls
+    assert any(call[0] == "signal" for call in fake_signal.calls)
+
+
+def test_regex_findall_safe_skips_alarm_off_main_thread(monkeypatch) -> None:
+    """This is the exact failure seen in CI on PR #75: an async FastAPI
+    endpoint (POST /corpus/documents) runs extract_document() -> ... ->
+    _regex_findall_safe() on the ASGI test client's background event-loop
+    thread, not the main thread. signal.signal() raises ValueError there.
+    Reproduced here with a fake signal module (SIGALRM "available" on any
+    OS) so the guard is verified without depending on an actual Unix CI
+    runner."""
+    fake_signal = _FakeUnixSignal()
+    monkeypatch.setattr(value_extractor, "signal", fake_signal)
+    monkeypatch.setattr(value_extractor.sys, "platform", "linux")
+
+    outcome: dict = {}
+
+    def _run_off_main_thread() -> None:
+        try:
+            outcome["results"] = _regex_findall_safe(re.compile(r"a+"), "aaa bbb aaa")
+        except Exception as exc:  # pragma: no cover -- failure path under test
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=_run_off_main_thread)
+    thread.start()
+    thread.join(timeout=5)
+
+    assert "error" not in outcome, f"raised off the main thread: {outcome.get('error')}"
+    assert [m.group(0) for m in outcome["results"]] == ["aaa", "aaa"]
+    assert fake_signal.calls == []  # alarm path must not have been touched
