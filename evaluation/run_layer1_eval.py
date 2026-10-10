@@ -316,6 +316,12 @@ def render_report(
         "ranking) -- treat them as a baseline for what ranking (TF-IDF) "
         "fixes, not a fully comparable ranked score.",
         "",
+        "The ranked configurations return their top 5, so a query with "
+        "more than 5 relevant documents (the generic phrase and proximity "
+        "queries, e.g. L020 matches every document) caps R@10 and AP at "
+        "5 / |relevant| even when all 5 results are relevant. Read those "
+        "rows against that ceiling, not against 1.0.",
+        "",
         "| Configuration | P@5 | R@10 | MAP | Avg latency (ms) |",
         "|---|---|---|---|---|",
     ]
