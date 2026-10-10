@@ -239,7 +239,9 @@ class CoStorageRule(BaseModel):
     support: float
     confidence: float
     lift: float
-    incompatibility_status: str  # e.g. "REACTIVE: ..." or "COMPATIBLE: ..."
+    incompatibility_status: (
+        str  # e.g. "REACTIVE: ...", "REVIEW: ...", or "NO KNOWN WARNING: ..."
+    )
 
 
 class CoStorageCheckResponse(BaseModel):

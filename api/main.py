@@ -656,7 +656,14 @@ async def co_storage_check(
     # are both present in the requested zone.
     all_transactions: list[list[str]] = list(zone_inventory.values())
 
-    miner = CoStoragePatternMiner(min_support=0.2, min_threshold_lift=1.0)
+    # Pass the already-loaded processed documents so the SDS Section 10
+    # incompatibility lookup uses real extracted claims rather than the
+    # hand-written fallback dict (see apriori_discovery._check_pair_against_sds).
+    miner = CoStoragePatternMiner(
+        min_support=0.2,
+        min_threshold_lift=1.0,
+        documents=_PROCESSED_DOCUMENTS,
+    )
     raw_rules = miner.discover_co_storage_rules(all_transactions)
 
     zone_chemical_set = set(zone_chemicals)
@@ -938,7 +945,11 @@ def _get_query_orchestrator() -> OpenQueryOrchestrator:
         if zone_id not in current_inv:
             return f"Zone '{zone_id}' not found in inventory."
         transactions = [chemicals for chemicals in current_inv.values() if chemicals]
-        miner = CoStoragePatternMiner(min_support=0.01, min_threshold_lift=0.0)
+        miner = CoStoragePatternMiner(
+            min_support=0.01,
+            min_threshold_lift=0.0,
+            documents=_PROCESSED_DOCUMENTS,
+        )
         rules = miner.discover_co_storage_rules(transactions)
         zone_chems = set(current_inv[zone_id])
         zone_rules = [
