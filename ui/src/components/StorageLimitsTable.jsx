@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { SourceCell, StateBadge } from './ui';
-import { citationLabel, formatValue, humanizeMetric, unitForCheck } from '../format';
+import { citationLabel, formatValue, humanizeMetric } from '../format';
 
 // min_* before max_* so a row reads as a range left to right.
 function metricOrder(a, b) {
@@ -9,44 +9,44 @@ function metricOrder(a, b) {
   return rank(a) - rank(b) || a.localeCompare(b);
 }
 
-// Display-only regrouping of the backend's per-(chemical, metric) checks.
-// Each cell shows that check's own state -- the table never derives a
-// per-chemical verdict itself; the only aggregate shown anywhere is the
-// zone-level safety_state the backend already computed.
-function groupChecks(chemicals, checks) {
-  const metrics = [...new Set(checks.map((c) => c.metric_name))].sort(metricOrder);
-  const byChemical = new Map(chemicals.map((name) => [name, {}]));
-  for (const c of checks) {
-    if (!byChemical.has(c.chemical_name)) byChemical.set(c.chemical_name, {});
-    byChemical.get(c.chemical_name)[c.metric_name] = c;
-  }
-  return { metrics, rows: [...byChemical.entries()] };
+// Display-only regrouping of the API's per-(chemical, metric) checks. The
+// limit is the threshold the backend retrieved for that check; the badge is
+// the backend's own verdict. The table never derives a verdict itself.
+function group(chemicals, limits, checks) {
+  const metrics = [...new Set([...limits, ...checks].map((x) => x.metric_name))].sort(metricOrder);
+  const rows = new Map(chemicals.map((name) => [name, { limits: {}, checks: {} }]));
+  const row = (name) => {
+    if (!rows.has(name)) rows.set(name, { limits: {}, checks: {} });
+    return rows.get(name);
+  };
+  for (const l of limits) row(l.chemical_name).limits[l.metric_name] = l;
+  for (const c of checks) row(c.chemical_name).checks[c.metric_name] = c;
+  return { metrics, rows: [...rows.entries()] };
 }
 
-function LimitCell({ check }) {
-  if (!check) return <span className="muted">—</span>;
-  if (check.state === 'UNKNOWN' && check.threshold_value == null) {
-    return (
-      <span className="limit-cell">
-        <StateBadge state="UNKNOWN" size="sm" />
-        <span className="muted">Not in SDS</span>
-      </span>
-    );
-  }
+function LimitCell({ limit, check }) {
+  if (!limit && !check) return <span className="muted">Not in SDS</span>;
   return (
     <span className="limit-cell">
-      <StateBadge state={check.state} size="sm" />
-      <span className="limit-value">{formatValue(check.threshold_value, unitForCheck(check))}</span>
+      {check && <StateBadge state={check.state} size="sm" />}
+      {limit ? (
+        <span className="limit-value">{formatValue(limit.value, limit.unit)}</span>
+      ) : (
+        <span className="muted">Not in SDS</span>
+      )}
     </span>
   );
 }
 
-export default function StorageLimitsTable({ chemicals = [], checks = [] }) {
+export default function StorageLimitsTable({ chemicals = [], limits = [], checks = [] }) {
   const [expanded, setExpanded] = useState(null);
-  const { metrics, rows } = groupChecks(chemicals, checks);
+  const { metrics, rows } = group(chemicals, limits, checks);
 
   if (rows.length === 0) {
     return <p className="muted">No chemicals are assigned to this zone.</p>;
+  }
+  if (metrics.length === 0) {
+    return <p className="muted">No storage-temperature limit for these chemicals is in the SDS corpus.</p>;
   }
 
   return (
@@ -63,11 +63,11 @@ export default function StorageLimitsTable({ chemicals = [], checks = [] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(([name, byMetric]) => {
-            const rowChecks = Object.values(byMetric);
+          {rows.map(([name, data]) => {
+            const rowChecks = Object.values(data.checks);
             const seen = new Set();
-            const sources = rowChecks
-              .map((c) => c.citation)
+            const sources = Object.values(data.limits)
+              .map((l) => l.citation)
               .filter((cit) => cit && !seen.has(citationLabel(cit)) && seen.add(citationLabel(cit)));
             const isOpen = expanded === name;
             return (
@@ -76,7 +76,7 @@ export default function StorageLimitsTable({ chemicals = [], checks = [] }) {
                   <td className="cell-strong">{name}</td>
                   {metrics.map((m) => (
                     <td key={m}>
-                      <LimitCell check={byMetric[m]} />
+                      <LimitCell limit={data.limits[m]} check={data.checks[m]} />
                     </td>
                   ))}
                   <td className="cell-source">

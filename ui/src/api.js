@@ -7,6 +7,26 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000
 
 const client = axios.create({ baseURL: API_BASE_URL });
 
+// A 401 on any authenticated call means the stored session is no longer valid
+// (expired, or the server's signing key changed). App registers a handler that
+// signs the user out cleanly instead of leaving every panel showing errors.
+let unauthorizedHandler = null;
+
+export function onUnauthorized(handler) {
+  unauthorizedHandler = handler;
+}
+
+client.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    const isLogin = err.config?.url === '/auth/login';
+    if (err.response?.status === 401 && !isLogin && unauthorizedHandler) {
+      unauthorizedHandler();
+    }
+    return Promise.reject(err);
+  }
+);
+
 function authHeader(token) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -158,10 +178,10 @@ export async function getHealth() {
   return res.data;
 }
 
-export async function getAuditLog(token, limit = 50, offset = 0) {
+export async function getAuditLog(token, limit = 50, offset = 0, action = '') {
   try {
     const res = await client.get('/audit-log', {
-      params: { limit, offset },
+      params: action ? { limit, offset, action } : { limit, offset },
       headers: authHeader(token),
     });
     return res.data;
@@ -190,3 +210,31 @@ export async function uploadSdsDocument(token, file, chemicalName = '', supplier
 }
 
 
+
+// Agent B (M3): Apriori co-storage patterns for a zone, each cross-checked
+// against the CAMEO reactivity lookup. Informational -- not a safety verdict.
+export async function getCoStorageCheck(token, zoneId) {
+  try {
+    const res = await client.get(`/zones/${zoneId}/co-storage-check`, {
+      headers: authHeader(token),
+    });
+    return res.data;
+  } catch (err) {
+    unwrap(err);
+  }
+}
+
+// Agent B (M3): plain-language explanation of an already-decided alert, with
+// an optional Sinhala ('si') or Tamil ('ta') safety card. The verdict in the
+// response is always the stored deterministic one, never the LLM's.
+export async function narrateAlert(token, alertId, language) {
+  try {
+    const res = await client.post(`/alerts/${alertId}/narrate`, null, {
+      params: language ? { language } : {},
+      headers: authHeader(token),
+    });
+    return res.data;
+  } catch (err) {
+    unwrap(err);
+  }
+}
