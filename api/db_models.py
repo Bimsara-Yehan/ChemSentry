@@ -132,19 +132,16 @@ class AuditLogRecord(Base):
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "action": self.action,
-            "user_id": self.user_id,
-            "resource": self.resource,
-            "details": self.details,
-            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
-        }
-
 
 def alert_to_dict(alert: AlertRecord, role: str) -> dict:
-    """Role-aware serializer to prevent data leakage based on user role."""
+    """Role-aware serializer for GET /alerts, so each role sees only what it needs.
+
+    AlertRecord.to_dict() returns every column, including who raised and
+    signed an alert and the sign-off notes (encrypted at rest because they
+    are identity and free text, see the class docstring). Viewers only need
+    what was flagged and its status; analysts also need the values and
+    reasoning to investigate; sign-off identity and notes stay with admins.
+    """
     role_str = role.value if hasattr(role, "value") else str(role)
     data = {
         "alert_id": alert.alert_id,

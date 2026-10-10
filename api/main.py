@@ -11,6 +11,7 @@ Auth flow:
   5. RBAC enforces role-based access (viewer < analyst < admin)
 """
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -33,7 +34,11 @@ from agents.agent_a_retrieval.corpus_retrieval import CorpusRetriever
 from agents.agent_b_analysis.apriori_discovery import CoStoragePatternMiner
 from agents.agent_b_analysis.llm_layer import SafetyCardNarrator
 from agents.agent_b_analysis.query_orchestrator import OpenQueryOrchestrator
-from agents.agent_c_environment.monitor import EnvironmentalMonitor, ZoneEvaluation
+from agents.agent_c_environment.monitor import (
+    MONITORED_METRICS,
+    EnvironmentalMonitor,
+    ZoneEvaluation,
+)
 from agents.agent_c_environment.zone_inventory import (
     load_zone_inventory,
     seed_default_zone_inventory,
@@ -55,6 +60,7 @@ from api.db_models import (
     AlertRecord,
     AuditLogRecord,
     UserRecord,
+    alert_to_dict,
     next_alert_id,
     next_user_id,
 )
@@ -100,10 +106,20 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Add CORS middleware (allow frontend to call from different origin during dev)
+# CORS: allowed origins come from CHEMSENTRY_CORS_ORIGINS (comma-separated)
+# so a deployment names its own frontend. The default covers only local dev
+# servers -- never "*", which lets any website's scripts call the API from a
+# visitor's browser.
+_cors_env = os.getenv("CHEMSENTRY_CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] or [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -206,35 +222,71 @@ def _get_environmental_monitor() -> EnvironmentalMonitor:
 # Ephemeral instrument-state caches, deliberately NOT persisted to the DB --
 # unlike AlertRecord/AuditLogRecord (audit-critical, append-only), "what did
 # the sensor last read" is not a decision that needs a durable record; only
-# the alerts an excursion produces are. Rebuilt from scratch on every
-# process restart via _seed_initial_zone_readings() below.
+# the alerts an excursion produces are. Empty after every process restart:
+# a zone has no reading until a sensor (or the simulator) sends one. The
+# server used to seed every zone with an invented 20 C "startup-default"
+# reading, which the dashboard then showed and evaluated as if a sensor had
+# taken it.
 _LATEST_ZONE_EVALUATIONS: dict[str, ZoneEvaluation] = {}
 _LAST_ALERT_TIMESTAMP: dict[str, datetime] = {}
 
 
-def _seed_initial_zone_readings() -> None:
-    """Give every inventoried zone one evaluated ambient reading at startup,
-    so GET /zones has real data (from the real retrieval + safety-evaluation
-    pipeline) to show immediately -- rather than requiring the simulator to
-    have already published something first."""
-    monitor = _get_environmental_monitor()
-    for zone_id in zone_inventory:
-        reading = SensorReading(
-            zone_id=zone_id,
-            temperature_celsius=20.0,
-            humidity_percent=45.0,
-            timestamp=datetime.now(timezone.utc),
-            device_id="startup-default",
-        )
-        _LATEST_ZONE_EVALUATIONS[zone_id] = monitor.handle_reading(reading)
+def _checks_without_reading(zone_id: str) -> list[ChemicalCheckOut]:
+    """Retrieved, cited limits for a zone that has no sensor reading yet.
 
-
-_seed_initial_zone_readings()
+    Retrieving a limit needs no reading -- only comparing against one does.
+    So every check is UNKNOWN (nothing to compare), but carries the same
+    reconciled limit and citation a reading would be judged against
+    (DeterministicSafetyEvaluator.reconcile). Without this the dashboard
+    showed "Not in SDS" for chemicals whose SDS does state a limit, until
+    the first reading arrived.
+    """
+    checks: list[ChemicalCheckOut] = []
+    for chemical_name in zone_inventory.get(zone_id, []):
+        thresholds = retriever.get_thresholds(chemical_name)
+        for metric_name in MONITORED_METRICS:
+            matching = [t for t in thresholds if t.metric_name == metric_name]
+            if matching:
+                limit, conflict = evaluator.reconcile(matching)
+            else:
+                limit, conflict = None, (
+                    f"No versioned SDS threshold retrieved for metric "
+                    f"'{metric_name}' on chemical '{chemical_name}'."
+                )
+            if limit is not None:
+                detail = (
+                    f"Limit on file: {limit.value} {limit.unit}. "
+                    f"Source: {limit.citation}"
+                )
+            else:
+                detail = conflict
+            checks.append(
+                ChemicalCheckOut(
+                    chemical_name=chemical_name,
+                    metric_name=metric_name,
+                    state=SafetyState.UNKNOWN.value,
+                    current_value=None,
+                    threshold_value=limit.value if limit else None,
+                    reasoning=f"UNKNOWN: No sensor reading received yet. {detail}",
+                    citation=limit.citation if limit else None,
+                )
+            )
+    return checks
 
 
 def _zone_status_response(zone_id: str) -> ZoneStatusResponse:
     """Build the API-facing view of a zone from its latest evaluation."""
-    evaluation = _LATEST_ZONE_EVALUATIONS[zone_id]
+    evaluation = _LATEST_ZONE_EVALUATIONS.get(zone_id)
+    if evaluation is None:
+        return ZoneStatusResponse(
+            zone_id=zone_id,
+            last_reading=None,
+            is_excursion=False,
+            safety_state=SafetyState.UNKNOWN.value,
+            last_alert_timestamp=_LAST_ALERT_TIMESTAMP.get(zone_id),
+            chemicals=zone_inventory.get(zone_id, []),
+            checks=_checks_without_reading(zone_id),
+        )
     return ZoneStatusResponse(
         zone_id=zone_id,
         last_reading=evaluation.reading,
@@ -570,9 +622,13 @@ async def list_alerts(
 
     Newest first -- a supervisor working the queue needs the most recent
     excursion visible without scrolling past the full history first.
+
+    Fields are filtered by role (alert_to_dict): viewers see what was
+    flagged and its status; analysts also the values and reasoning; only
+    admins see who raised and signed it and the sign-off notes.
     """
     alerts = db.query(AlertRecord).order_by(AlertRecord.id.desc()).all()
-    return {"alerts": [alert.to_dict() for alert in alerts]}
+    return {"alerts": [alert_to_dict(alert, user.role) for alert in alerts]}
 
 
 @app.post("/admin/sign-off")
@@ -1096,17 +1152,9 @@ async def create_zone(
         )
     db.commit()
 
+    # No reading is recorded here: a new zone has none until a sensor sends
+    # one, and GET /zones shows its retrieved limits as UNKNOWN until then.
     zone_inventory[payload.zone_id] = list(payload.chemicals)
-
-    monitor = _get_environmental_monitor()
-    reading = SensorReading(
-        zone_id=payload.zone_id,
-        temperature_celsius=20.0,
-        humidity_percent=45.0,
-        timestamp=datetime.now(timezone.utc),
-        device_id="zone-create-default",
-    )
-    _LATEST_ZONE_EVALUATIONS[payload.zone_id] = monitor.handle_reading(reading)
 
     return {
         "zone_id": payload.zone_id,

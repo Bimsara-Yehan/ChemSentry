@@ -43,7 +43,7 @@ from safety.state_machine import DeterministicSafetyEvaluator
 # metric on every chemical, permanently masking whatever the temperature
 # checks find. Documented here rather than silently degrading every zone's
 # state; extend this list once a real humidity threshold exists to extract.
-_MONITORED_METRICS = ("max_storage_temperature", "min_storage_temperature")
+MONITORED_METRICS = ("max_storage_temperature", "min_storage_temperature")
 
 
 @dataclass
@@ -117,7 +117,7 @@ class EnvironmentalMonitor:
             metric) in the zone's inventory, an aggregated display state,
             and `is_excursion` -- True only when at least one check is a
             genuine WARNING (not merely UNKNOWN; see module docstring on
-            _MONITORED_METRICS for why UNKNOWN must not by itself count as
+            MONITORED_METRICS for why UNKNOWN must not by itself count as
             an excursion here).
         """
         chemicals = self._zone_inventory.get(reading.zone_id, [])
@@ -125,7 +125,7 @@ class EnvironmentalMonitor:
 
         for chemical_name in chemicals:
             thresholds = self._retriever.get_thresholds(chemical_name)
-            for metric_name in _MONITORED_METRICS:
+            for metric_name in MONITORED_METRICS:
                 request = SafetyEvaluationRequest(
                     chemical_name=chemical_name,
                     zone_id=reading.zone_id,

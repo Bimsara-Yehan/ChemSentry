@@ -83,7 +83,8 @@ class ChemicalCheckOut(BaseModel):
     chemical_name: str
     metric_name: str
     state: str  # "SAFE", "WARNING", "UNKNOWN"
-    current_value: float
+    # None when the zone has no sensor reading yet -- never a placeholder 0.0.
+    current_value: Optional[float] = None
     threshold_value: Optional[float] = None
     reasoning: str
     citation: Optional[str] = None

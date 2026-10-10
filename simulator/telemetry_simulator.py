@@ -54,8 +54,8 @@ def generate_reading(
     zone_id: str,
     mode: Mode,
     device_id: str,
-    normal_temp: float = 20.0,
-    excursion_temp: float = 18.0,
+    normal_temp: float | None = None,
+    excursion_temp: float = _EXCURSION_TEMP_C,
 ) -> SensorReading:
     """Produce one plausible sensor reading for a zone.
 
@@ -63,14 +63,22 @@ def generate_reading(
         zone_id: Target zone (must match a topic Agent C subscribes to).
         mode: "steady" for a normal ambient reading; "excursion" for a
             reading deliberately outside the plausible range, to demo the
-            WARNING path.
+            WARNING path (see _EXCURSION_TEMP_C for why this only reliably
+            triggers a real WARNING in a zone with a real extracted
+            threshold, i.e. Zone_C in this corpus).
         device_id: Simulated ESP32 identifier.
-        normal_temp: Normal ambient test input in degrees C (default: 20.0 °C).
-        excursion_temp: Excursion test input in degrees C (default: 18.0 °C).
+        normal_temp: Fixed steady-mode temperature in C, a test input and not
+            a threshold. None (default) draws a plausible ambient value from
+            _STEADY_TEMP_RANGE_C so a steady run still looks like a sensor.
+        excursion_temp: Excursion-mode temperature in C, also a test input.
     """
     humidity = round(random.uniform(*_STEADY_HUMIDITY_RANGE_PCT), 1)
     if mode == "steady":
-        temperature = normal_temp
+        temperature = (
+            normal_temp
+            if normal_temp is not None
+            else round(random.uniform(*_STEADY_TEMP_RANGE_C), 1)
+        )
     else:
         temperature = excursion_temp
 
@@ -124,8 +132,8 @@ class TelemetryPublisher:
         mode: Mode,
         interval_seconds: float,
         iterations: int | None = None,
-        normal_temp: float = 20.0,
-        excursion_temp: float = 18.0,
+        normal_temp: float | None = None,
+        excursion_temp: float = _EXCURSION_TEMP_C,
     ) -> None:
         """Publish one reading per zone every `interval_seconds`.
 
@@ -165,14 +173,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--normal-temp",
         type=float,
-        default=20.0,
-        help="Normal ambient temperature test input in degrees C (default: 20.0, test input only, not a threshold).",
+        default=None,
+        help=(
+            "Fixed steady-mode temperature in C (test input, not a threshold). "
+            "Default: a random plausible ambient value each reading."
+        ),
     )
     parser.add_argument(
         "--excursion-temp",
         type=float,
-        default=18.0,
-        help="Excursion temperature test input in degrees C (default: 18.0, test input only, not a threshold).",
+        default=_EXCURSION_TEMP_C,
+        help=(
+            f"Excursion-mode temperature in C (test input, not a threshold; "
+            f"default {_EXCURSION_TEMP_C})."
+        ),
     )
     parser.add_argument(
         "--interval", type=float, default=5.0, help="Seconds between rounds."
