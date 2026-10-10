@@ -244,6 +244,43 @@ def test_boiling_point_still_extracts_plain_values_correctly() -> None:
     assert results[0].value == "56"
 
 
+def test_flash_point_range_is_not_read_as_a_negative_value() -> None:
+    """The real 2-Propanol SDS case: the range dash was read as a minus
+    sign, giving -13 C. The lower end is reported, the range stays cited."""
+    text = "Flash point: 12-13 \xb0C"
+    results = extract_flash_point(text, chemical="2-Propanol")
+
+    assert len(results) == 1
+    assert results[0].value == "12"
+    assert "12-13" in results[0].original_text_span
+
+
+def test_boiling_point_range_reports_the_conservative_lower_end() -> None:
+    """The real formic acid case: "100 - 101" used to give the upper end.
+    A reading above the lower end is already inside the boiling range."""
+    text = "Boiling point/boiling range : 100 - 101 \xb0C"
+    results = extract_boiling_point(text, chemical="Formic acid")
+
+    assert len(results) == 1
+    assert results[0].value == "100"
+
+
+def test_flash_point_range_handles_negative_and_comma_values() -> None:
+    text = "Flash point : -20,5 – -18 \xb0C"
+    results = extract_flash_point(text, chemical="Test")
+
+    assert len(results) == 1
+    assert results[0].value == "-20.5"
+
+
+def test_flash_point_accepts_masculine_ordinal_degree_sign() -> None:
+    """PanReac SDSs write the degree sign as U+00BA, as in storage limits."""
+    results = extract_flash_point("Flash point: 12 \xbaC", chemical="2-Propanol")
+
+    assert len(results) == 1
+    assert results[0].value == "12"
+
+
 # ---------------------------------------------------------------------------
 # _regex_findall_safe -- main-thread guard for the SIGALRM timeout path
 # ---------------------------------------------------------------------------
