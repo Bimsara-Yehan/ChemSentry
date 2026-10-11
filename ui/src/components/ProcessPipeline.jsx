@@ -15,7 +15,7 @@ const STAGES = [
     icon: ScanSearch,
     title: 'Tolerant match',
     short: 'k-gram · Levenshtein · Soundex',
-    body: 'The query is normalised by the same preprocessing as the corpus, then misspellings and variants are resolved with a 3-gram index, edit distance and phonetic codes, so "hydrogen peroxde" still finds hydrogen peroxide.',
+    body: 'Limits come only from the chemical\'s own SDS, matched by exact name (ignoring case and spacing). A misspelling such as "hydrogen peroxde" is resolved with a 3-gram index, edit distance and phonetic codes, and offered as a "Did you mean" suggestion to confirm, never swapped in, because the closest spelling can be a different chemical.',
   },
   {
     id: 'filter',
